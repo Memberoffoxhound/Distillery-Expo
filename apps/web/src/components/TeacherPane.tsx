@@ -11,6 +11,7 @@ import {
   stageRunning,
 } from "../lib/eventSelectors";
 import {
+  BIG_TEACHER_NAME,
   fetchTeachers,
   formatTeacherLabel,
   type TeacherInfo,
@@ -93,7 +94,7 @@ function mergeTeacher(
 
 /**
  * Teacher pane — binds to stage=teach progress / metric / stage / decision.
- * Selected teacher shows as "comma master · <model>" when live.
+ * Selected teacher is locked to "comma master · big_driving_supercombo" when live.
  * Fixture is always labeled. Hooks for GET /teachers when Craig lands it.
  * No Chestnut. No invented live GPU.
  */
@@ -144,6 +145,10 @@ export function TeacherPane({ events }: { events: DistilleryEvent[] }) {
   }, [merged, teacherChecking]);
 
   const teacherList: TeacherModel[] = teacherApi?.teachers ?? [];
+  const teacherRowLabel = (teacher: TeacherModel): string =>
+    teacher.fixture || teacher.source === "fixture"
+      ? `fixture · ${BIG_TEACHER_NAME}`
+      : `comma master · ${BIG_TEACHER_NAME}`;
 
   const identity = (
     <div
@@ -169,7 +174,7 @@ export function TeacherPane({ events }: { events: DistilleryEvent[] }) {
           <EmptyState
             title="Teacher standing by"
             body="Waiting for shard packing to finish. Soft-label pass starts only when teach events arrive on the bus."
-            hint="No live train-device claim invented while idle · no Chestnut"
+            hint={`No live train-device claim invented while idle · teacher locked to comma master · ${BIG_TEACHER_NAME}`}
           />
         </div>
       );
@@ -181,15 +186,13 @@ export function TeacherPane({ events }: { events: DistilleryEvent[] }) {
           <EmptyState
             title="Waiting to teach"
             body="Shards are ready. This pane stays quiet until the pipeline emits teach stage, progress, or metric events."
-            hint="Run demo / /jobs/teach · GET /teachers when Craig lands it"
+            hint={`Run demo / /jobs/teach · teacher locked to comma master · ${BIG_TEACHER_NAME}`}
           />
           {teacherList.length > 0 && (
             <div className="teacher-list" aria-label="Available teachers">
               {teacherList.map((t, i) => (
                 <span key={String(t.id ?? t.name ?? i)} className="teacher-list-item mono">
-                  {t.fixture || t.source === "fixture"
-                    ? `fixture · ${t.name ?? t.label ?? "offline"}`
-                    : `comma master · ${[t.name, t.version].filter(Boolean).join(" ") || "model"}`}
+                  {teacherRowLabel(t)}
                 </span>
               ))}
             </div>
@@ -205,17 +208,15 @@ export function TeacherPane({ events }: { events: DistilleryEvent[] }) {
           body={
             label.tone === "fixture"
               ? "Fixture teacher path — soft-labels will be labeled offline, not comma master live."
-              : "Selected teacher soft-labels appear here when teach events stream on whatever tinygrad device is ready. Expo is mission control — not a live GPU dashboard."
+              : `Teacher soft-labels from comma master · ${BIG_TEACHER_NAME} appear here when teach events stream on whatever tinygrad device is ready. Expo is mission control — not a live GPU dashboard.`
           }
-          hint="comma master · <model> when live · fixture always labeled · no Chestnut"
+          hint={`Teacher locked: comma master · ${BIG_TEACHER_NAME} when live · fixture · ${BIG_TEACHER_NAME} offline · no Chestnut`}
         />
         {teacherList.length > 0 && (
           <div className="teacher-list" aria-label="Available teachers">
             {teacherList.map((t, i) => (
               <span key={String(t.id ?? t.name ?? i)} className="teacher-list-item mono">
-                {t.fixture || t.source === "fixture"
-                  ? `fixture · ${t.name ?? t.label ?? "offline"}`
-                  : `comma master · ${[t.name, t.version].filter(Boolean).join(" ") || "model"}`}
+                {teacherRowLabel(t)}
               </span>
             ))}
           </div>
@@ -254,7 +255,7 @@ export function TeacherPane({ events }: { events: DistilleryEvent[] }) {
         {decision?.chosen ? (
           <div className="stage-decision muted">
             <span className="k">{decision.title}</span>
-            <span className="v mono">{decision.chosen}</span>
+            <span className="v mono">{BIG_TEACHER_NAME}</span>
           </div>
         ) : (
           <div className="muted">{label.detail}</div>

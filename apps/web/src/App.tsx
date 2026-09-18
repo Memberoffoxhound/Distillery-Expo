@@ -9,6 +9,8 @@ import { TeacherPane } from "./components/TeacherPane";
 import { TrainPane } from "./components/TrainPane";
 import { EvalPane } from "./components/EvalPane";
 import { FlashPane } from "./components/FlashPane";
+import { StatusChips } from "./components/StatusChips";
+import { StartTraining } from "./components/StartTraining";
 import { useJobStream } from "./hooks/useJobStream";
 import "./styles/app.css";
 
@@ -42,19 +44,18 @@ export default function App() {
           <div className="brand-mark" />
           <div>
             <h1>Distillery Expo</h1>
-            <span>mici · Cinque/7090 XT · stock-modelV2 student</span>
+            <span>mici · tinygrad teacher · stock-modelV2 student</span>
           </div>
         </div>
         <div className="header-actions">
+          <StatusChips />
           <span className={`status-pill ${pillClass}`}>{statusLabel}</span>
-          <button
-            className="primary"
-            disabled={busy}
-            onClick={() => job.startPipeline({ source: "fixture" })}
-            title="POST /jobs/pipeline — teach→train→export→eval→gated flash"
-          >
-            Run distill
-          </button>
+          <StartTraining
+            busy={busy}
+            onStart={({ source, includeFlash }) =>
+              job.startPipeline({ source, includeFlash })
+            }
+          />
           <button
             disabled={busy}
             onClick={() => job.startIngest({ source: "fixture" })}
@@ -101,7 +102,7 @@ export default function App() {
         <Pane title="Shard" tag="pack" className="shard">
           <ShardPane events={job.events} />
         </Pane>
-        <Pane title="Teacher" tag="7090 XT" className="teacher">
+        <Pane title="Teacher" tag="soft-labels" className="teacher">
           <TeacherPane events={job.events} />
         </Pane>
         <Pane title="Train" tag="loss" className="train">

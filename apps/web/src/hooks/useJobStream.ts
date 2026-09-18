@@ -245,12 +245,16 @@ export function useJobStream() {
   );
 
   const startPipeline = useCallback(
-    async (opts?: { source?: RouteSource; routeId?: string | null }) => {
+    async (opts?: {
+      source?: RouteSource;
+      routeId?: string | null;
+      includeFlash?: boolean;
+    }) => {
       await beginJob("pipeline", () =>
         startPipelineJob({
           source: opts?.source ?? "fixture",
           route_id: opts?.routeId ?? null,
-          include_flash: true,
+          include_flash: opts?.includeFlash ?? true,
         })
       );
     },

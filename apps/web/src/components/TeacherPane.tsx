@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import type { DistilleryEvent } from "../types/events";
 import {
   hasStageSignal,
@@ -9,12 +10,92 @@ import {
   stageDone,
   stageRunning,
 } from "../lib/eventSelectors";
+import {
+  fetchTeachers,
+  formatTeacherLabel,
+  type TeacherInfo,
+  type TeacherModel,
+} from "../lib/api";
 import { EmptyState } from "./EmptyState";
 
 /**
+ * Infer fixture vs live from teach events when API teacher list is thin.
+ * Never silent about fixture. Never Chestnut.
+ */
+function teacherFromEvents(events: DistilleryEvent[]): Partial<TeacherInfo> {
+  let fixtureHint = false;
+  let liveHint = false;
+  let modelName: string | null = null;
+  let modelVersion: string | null = null;
+
+  for (const ev of events) {
+    if (ev.stage !== "teach") continue;
+    const payload = (ev.payload ?? {}) as Record<string, unknown>;
+    const meta = (payload.meta as Record<string, unknown> | undefined) ?? {};
+    const msg = String(payload.message ?? payload.detail ?? "");
+    if (
+      payload.live === false ||
+      meta.fixture === true ||
+      meta.live === false ||
+      /fixture|live=false/i.test(msg) ||
+      (ev.kind === "decision" &&
+        /fixture/i.test(String(payload.chosen ?? "")))
+    ) {
+      fixtureHint = true;
+    }
+    if (payload.live === true || meta.live === true) {
+      liveHint = true;
+    }
+    const teacherMeta = meta.teacher ?? payload.teacher;
+    if (typeof teacherMeta === "string" && teacherMeta.trim()) {
+      modelName = teacherMeta;
+    }
+    if (typeof meta.model_name === "string") modelName = meta.model_name;
+    if (typeof meta.model_version === "string") modelVersion = meta.model_version;
+    if (typeof payload.model_name === "string") modelName = payload.model_name;
+    if (typeof payload.model_version === "string")
+      modelVersion = payload.model_version;
+  }
+
+  if (!fixtureHint && !liveHint && !modelName) return {};
+  return {
+    fixture: fixtureHint && !liveHint,
+    live: liveHint && !fixtureHint,
+    status: fixtureHint && !liveHint ? "fixture" : liveHint ? "live" : "unknown",
+    source: fixtureHint && !liveHint ? "fixture" : liveHint ? "comma_master" : null,
+    model_name: modelName,
+    model_version: modelVersion,
+  };
+}
+
+function mergeTeacher(
+  api: TeacherInfo | null,
+  fromEvents: Partial<TeacherInfo>
+): TeacherInfo | null {
+  if (!api && !Object.keys(fromEvents).length) return null;
+  const base: TeacherInfo = { ...(api ?? {}), ...fromEvents };
+  // Events win on fixture honesty if they say fixture
+  if (fromEvents.fixture) {
+    base.fixture = true;
+    base.live = false;
+    base.status = "fixture";
+    base.source = "fixture";
+  }
+  // Prefer API selected model name when events lack one
+  if (!base.model_name && api?.selected?.name) {
+    base.model_name = api.selected.name;
+  }
+  if (!base.model_version && api?.selected?.version) {
+    base.model_version = api.selected.version;
+  }
+  return base;
+}
+
+/**
  * Teacher pane — binds to stage=teach progress / metric / stage / decision.
- * Honest idle: no invented live GPU. Demo already streams teach events on Run demo.
- * Future: Craig /jobs/teach can feed the same event kinds.
+ * Selected teacher shows as "comma master · <model>" when live.
+ * Fixture is always labeled. Hooks for GET /teachers when Craig lands it.
+ * No Chestnut. No invented live GPU.
  */
 export function TeacherPane({ events }: { events: DistilleryEvent[] }) {
   const metrics = latestMetrics(events, "teach");
@@ -26,31 +107,120 @@ export function TeacherPane({ events }: { events: DistilleryEvent[] }) {
   const shardDone = stageDone(events, "shard");
   const shardRunning = stageRunning(events, "shard");
 
+  const [teacherApi, setTeacherApi] = useState<TeacherInfo | null>(null);
+  const [teacherChecking, setTeacherChecking] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setTeacherChecking(true);
+    fetchTeachers()
+      .then((t) => {
+        if (!cancelled) setTeacherApi(t);
+      })
+      .catch(() => {
+        if (!cancelled) setTeacherApi(null);
+      })
+      .finally(() => {
+        if (!cancelled) setTeacherChecking(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const merged = useMemo(
+    () => mergeTeacher(teacherApi, teacherFromEvents(events)),
+    [teacherApi, events]
+  );
+  const label = useMemo(() => {
+    if (teacherChecking && !merged) {
+      return {
+        primary: "Teacher · checking…",
+        tone: "checking" as const,
+        detail: "Loading teacher list/source…",
+      };
+    }
+    return formatTeacherLabel(merged);
+  }, [merged, teacherChecking]);
+
+  const teacherList: TeacherModel[] = teacherApi?.teachers ?? [];
+
+  const identity = (
+    <div
+      className={`teacher-identity tone-${label.tone}`}
+      title={label.detail}
+      aria-label={label.primary}
+    >
+      <span className="teacher-identity-label">{label.primary}</span>
+      {label.tone === "fixture" && (
+        <span className="badge badge-fixture">fixture</span>
+      )}
+      {label.tone === "live" && (
+        <span className="badge badge-live">live</span>
+      )}
+    </div>
+  );
+
   if (!signal) {
     if (shardRunning) {
       return (
-        <EmptyState
-          title="Teacher standing by"
-          body="Waiting for shard packing to finish. Soft-label pass starts only when teach events arrive on the bus."
-          hint="No live 7090 XT invented while idle"
-        />
+        <div className="stage-pane teacher-pane">
+          {identity}
+          <EmptyState
+            title="Teacher standing by"
+            body="Waiting for shard packing to finish. Soft-label pass starts only when teach events arrive on the bus."
+            hint="No live train-device claim invented while idle · no Chestnut"
+          />
+        </div>
       );
     }
     if (shardDone) {
       return (
-        <EmptyState
-          title="Waiting to teach"
-          body="Shards are ready. This pane stays quiet until the pipeline emits teach stage, progress, or metric events."
-          hint="Run demo streams teach · /jobs/teach later"
-        />
+        <div className="stage-pane teacher-pane">
+          {identity}
+          <EmptyState
+            title="Waiting to teach"
+            body="Shards are ready. This pane stays quiet until the pipeline emits teach stage, progress, or metric events."
+            hint="Run demo / /jobs/teach · GET /teachers when Craig lands it"
+          />
+          {teacherList.length > 0 && (
+            <div className="teacher-list" aria-label="Available teachers">
+              {teacherList.map((t, i) => (
+                <span key={String(t.id ?? t.name ?? i)} className="teacher-list-item mono">
+                  {t.fixture || t.source === "fixture"
+                    ? `fixture · ${t.name ?? t.label ?? "offline"}`
+                    : `comma master · ${[t.name, t.version].filter(Boolean).join(" ") || "model"}`}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       );
     }
     return (
-      <EmptyState
-        title="Teacher standing by"
-        body="Cinque/supercombo soft-labels on the 7090 XT appear here when teach events stream. Expo is mission control — not a live GPU dashboard."
-        hint="stage=teach · progress / metric / stage · no Chestnut"
-      />
+      <div className="stage-pane teacher-pane">
+        {identity}
+        <EmptyState
+          title="Teacher standing by"
+          body={
+            label.tone === "fixture"
+              ? "Fixture teacher path — soft-labels will be labeled offline, not comma master live."
+              : "Selected teacher soft-labels appear here when teach events stream on whatever tinygrad device is ready. Expo is mission control — not a live GPU dashboard."
+          }
+          hint="comma master · <model> when live · fixture always labeled · no Chestnut"
+        />
+        {teacherList.length > 0 && (
+          <div className="teacher-list" aria-label="Available teachers">
+            {teacherList.map((t, i) => (
+              <span key={String(t.id ?? t.name ?? i)} className="teacher-list-item mono">
+                {t.fixture || t.source === "fixture"
+                  ? `fixture · ${t.name ?? t.label ?? "offline"}`
+                  : `comma master · ${[t.name, t.version].filter(Boolean).join(" ") || "model"}`}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -75,6 +245,7 @@ export function TeacherPane({ events }: { events: DistilleryEvent[] }) {
 
   return (
     <div className="stage-pane teacher-pane">
+      {identity}
       <div className="stage-head">
         <div className="stage-title-row">
           <span className="stage-headline">{headline}</span>
@@ -86,7 +257,7 @@ export function TeacherPane({ events }: { events: DistilleryEvent[] }) {
             <span className="v mono">{decision.chosen}</span>
           </div>
         ) : (
-          <div className="muted">Cinque/supercombo · 7090 XT · no Chestnut</div>
+          <div className="muted">{label.detail}</div>
         )}
       </div>
 

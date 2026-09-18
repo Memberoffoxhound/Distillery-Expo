@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "distillery-expo"
-version = "0.1.0"
+version = "0.2.0"
 description = "tinygrad distill control room — mici → Cinque/supercombo (7090 XT) → stock-modelV2 student"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,15 +18,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["ruff"]
+dev = ["ruff", "pytest"]
 
 [project.scripts]
 dex = "dex.cli:main"
 
 [tool.setuptools]
-packages = ["distillery_events", "dex", "api"]
+packages = ["distillery_events", "distillery_ingest", "dex", "api"]
 
 [tool.setuptools.package-dir]
 distillery_events = "packages/events/distillery_events"
+distillery_ingest = "packages/ingest/distillery_ingest"
 dex = "apps/cli/dex"
 api = "apps/api"
+
+[tool.pytest.ini_options]
+testpaths = ["packages/ingest/tests", "apps/api"]
+pythonpath = ["."]

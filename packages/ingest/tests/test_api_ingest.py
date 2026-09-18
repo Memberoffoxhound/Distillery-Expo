@@ -213,3 +213,75 @@ def test_discover_ssh_test_unconfigured(client, tmp_path, monkeypatch):
     body = r.json()
     assert body["ok"] is False
     assert body.get("error")
+
+
+def test_routes_ssh_empty_honest(monkeypatch, tmp_path):
+    """GET /routes?source=ssh with empty realdata → source=ssh, 0 routes, Phil message."""
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+    monkeypatch.setenv("MICI_SSH_HOST", "192.168.1.50")
+    monkeypatch.setenv("MICI_SSH_USER", "comma")
+    # Isolate from on-disk JWT / ssh caches that would change posture
+    monkeypatch.setattr(
+        "distillery_ingest.discover._SSH_CACHE",
+        tmp_path / "ssh_config.json",
+    )
+    monkeypatch.setattr(
+        "distillery_ingest.discover._JWT_CACHE",
+        tmp_path / "connect_jwt",
+    )
+
+    from distillery_ingest.sources.ssh import REALDATA, SshRouteSource
+
+    monkeypatch.setattr(SshRouteSource, "list_routes", lambda self, *, limit=20: [])
+
+    from api.main import app
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as c:
+        r = c.get("/routes", params={"source": "ssh", "limit": 10})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["source"] == "ssh"
+    assert data["ssh_host"] == "192.168.1.50"
+    assert data["routes"] == []
+    assert data.get("empty_reason") == "empty_realdata"
+    assert data.get("message") == f"SSH ok · 0 routes under {REALDATA}"
+    # Must not quietly return fixture routes
+    assert not any(
+        (row.get("meta") or {}).get("fixture") or row.get("source") == "fixture"
+        for row in data["routes"]
+    )
+
+
+def test_routes_ssh_error_honest(monkeypatch, tmp_path):
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+    monkeypatch.setenv("MICI_SSH_HOST", "10.0.0.9")
+    monkeypatch.setattr(
+        "distillery_ingest.discover._SSH_CACHE",
+        tmp_path / "ssh_config.json",
+    )
+    monkeypatch.setattr(
+        "distillery_ingest.discover._JWT_CACHE",
+        tmp_path / "connect_jwt",
+    )
+
+    from distillery_ingest.sources.ssh import SshRouteSource
+
+    def _boom(self, *, limit=20):
+        raise RuntimeError("Connection timed out")
+
+    monkeypatch.setattr(SshRouteSource, "list_routes", _boom)
+
+    from api.main import app
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as c:
+        r = c.get("/routes", params={"source": "ssh"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["source"] == "ssh"
+    assert data["routes"] == []
+    assert data.get("empty_reason") == "ssh_error"
+    assert "timed out" in (data.get("error") or "").lower() or "timed out" in (
+        data.get("message") or ""
+    ).lower()

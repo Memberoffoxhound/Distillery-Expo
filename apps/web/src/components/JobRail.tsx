@@ -38,7 +38,7 @@ export function JobRail({
 }: {
   stageStatus: Record<StageName, StageStatus>;
   stageTiming: Record<StageName, StageTiming>;
-  jobKind?: "demo" | "ingest" | "shard" | "pipeline" | "teach" | "train" | "export" | "eval" | null;
+  jobKind?: "demo" | "ingest" | "shard" | "pipeline" | "train_all" | "teach" | "train" | "export" | "eval" | null;
 }) {
   const [now, setNow] = useState(() => Date.now());
 

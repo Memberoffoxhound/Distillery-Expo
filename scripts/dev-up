@@ -5,8 +5,15 @@
 #   - Fedora first (what Bruce runs today)
 #   - Portable by default: POSIX sh + python3 + node/npm only
 #   - No apt-only paths, no glibc-only assumptions, no Linux-only hard deps
-#   - macOS (incl. Apple Silicon) is a near-term follow-on: detect OS, same
-#     commands; brew/python3/node notes stay in comments/docs only for now
+#   - macOS (incl. Apple Silicon): same commands; brew notes in bootstrap
+#
+# Roles:
+#   scripts/bootstrap.sh  = bare-machine path (system toolchain + deps + Expo)
+#                           one-curl: curl -fsSL …/bootstrap.sh | sh
+#   scripts/dev-up        = day-to-day after toolchain is present
+#                           (venv + pip + npm + launch). On Fedora, if python3/
+#                           node/npm are missing, auto-installs via dnf instead
+#                           of only dying.
 #
 # Usage (from repo root):
 #   ./scripts/dev-up
@@ -26,6 +33,10 @@ info()  { printf '%s\n' "$*"; }
 warn()  { printf 'warn: %s\n' "$*" >&2; }
 die()   { printf 'error: %s\n' "$*" >&2; exit 1; }
 
+have_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
 detect_os() {
   # Portable uname — do not assume Linux. macOS follow-on hooks go here.
   case "$(uname -s 2>/dev/null || echo unknown)" in
@@ -35,27 +46,59 @@ detect_os() {
   esac
 }
 
+is_fedora_like() {
+  have_cmd dnf || have_cmd microdnf || {
+    [ -f /etc/fedora-release ] || [ -f /etc/redhat-release ]
+  }
+}
+
 OS=$(detect_os)
 
-# --- toolchain checks (friendly, install-hint only; no package-manager hard-coding) ---
-need_cmd() {
+# --- toolchain: Fedora auto-install via dnf; otherwise point at bootstrap ---
+ensure_cmd() {
   cmd=$1
-  hint=$2
-  if ! command -v "$cmd" >/dev/null 2>&1; then
-    die "missing \`$cmd\`. $hint"
+  dnf_pkgs=$2
+  if have_cmd "$cmd"; then
+    return 0
   fi
+
+  if [ "$OS" = "linux" ] && is_fedora_like; then
+    DNF=dnf
+    have_cmd dnf || DNF=microdnf
+    info "missing \`$cmd\` — installing via $DNF: $dnf_pkgs"
+    info "(may prompt for sudo password; for bare machines prefer ./scripts/bootstrap.sh)"
+    # shellcheck disable=SC2086
+    if have_cmd sudo; then
+      sudo "$DNF" install -y $dnf_pkgs
+    else
+      "$DNF" install -y $dnf_pkgs
+    fi
+    if have_cmd "$cmd"; then
+      info "installed \`$cmd\` OK"
+      return 0
+    fi
+    die "still missing \`$cmd\` after dnf install. Try: ./scripts/bootstrap.sh"
+  fi
+
+  if [ "$OS" = "macos" ]; then
+    die "missing \`$cmd\`. Install with Homebrew (brew install python node), or run ./scripts/bootstrap.sh"
+  fi
+
+  die "missing \`$cmd\`. On Fedora: sudo dnf install $dnf_pkgs
+Or bare-machine one-shot: ./scripts/bootstrap.sh
+  (curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh)"
 }
 
 info "Distillery Expo — one-command bring-up (os=$OS)"
 info "Repo: $ROOT"
 info ""
 
-# Fedora-first hints; macOS notes kept as comments for cheap follow-on.
+# Fedora-first; macOS via brew (bootstrap) or manual install.
 # Linux/Fedora:  sudo dnf install python3 python3-pip nodejs npm
-# macOS later:   brew install python node   (Apple Silicon: same brew formulae)
-need_cmd python3 "Install Python 3.10+ (Fedora: sudo dnf install python3 python3-pip)."
-need_cmd node    "Install Node.js 18+ (Fedora: sudo dnf install nodejs npm)."
-need_cmd npm     "Install npm (Fedora: sudo dnf install npm)."
+# macOS:         brew install python node
+ensure_cmd python3 "python3 python3-pip"
+ensure_cmd node "nodejs npm"
+ensure_cmd npm "npm"
 
 PY_VER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
 info "python3 $PY_VER · node $(node -v) · npm $(npm -v)"
@@ -63,7 +106,15 @@ info "python3 $PY_VER · node $(node -v) · npm $(npm -v)"
 # --- Python venv + editable install ---
 if [ ! -d "$VENV_DIR" ]; then
   info "Creating venv at $VENV_DIR …"
-  python3 -m venv "$VENV_DIR"
+  if ! python3 -m venv "$VENV_DIR"; then
+    if [ "$OS" = "linux" ] && is_fedora_like; then
+      info "venv failed — installing python3-pip via dnf and retrying…"
+      if have_cmd sudo; then sudo dnf install -y python3 python3-pip; else dnf install -y python3 python3-pip; fi
+      python3 -m venv "$VENV_DIR"
+    else
+      die "python3 -m venv failed. Install venv support, or run ./scripts/bootstrap.sh"
+    fi
+  fi
 fi
 
 # shellcheck disable=SC1091
@@ -151,6 +202,7 @@ info "Logs:  .cache/dev-up-api.log  ·  .cache/dev-up-web.log"
 info "Stop:  kill \$(cat .cache/dev-up-api.pid) \$(cat .cache/dev-up-web.pid)"
 info ""
 info "Re-run safe. Set DISTILLERY_FORCE_PIP=1 / DISTILLERY_FORCE_NPM=1 to reinstall."
+info "Bare machine (no python/node)? Use: ./scripts/bootstrap.sh"
 
 # Keep script attached? Prefer exit so Bruce's shell returns; children keep running.
 # If foreground preferred later, trap + wait here. For one-command "land in Expo", exit is fine.

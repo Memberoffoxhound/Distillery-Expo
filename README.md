@@ -2,7 +2,7 @@
 
 **One-stop tinygrad distill control room** for comma mici routes → Cinque/supercombo teacher (7090 XT) → lighter stock-modelV2-I/O student (mici/QCOM) → export / eval / gated flash.
 
-> **M2** = shards pack on the typed event bus + one-command launcher (`./scripts/dev-up`).
+> **M2** = shards pack on the typed event bus + one-command launcher (`./scripts/bootstrap.sh` / `./scripts/dev-up`).
 > Expo Shard / Teacher / Train / Eval / Flash panes bind truthful stage events (demo streams them). Flash stays dual-gated. No `/jobs/teach|train|export|eval` yet — use **Run demo** for the full path.
 
 ## Hardware (v1)
@@ -17,7 +17,25 @@
 
 Dongle default: `3e2de7ed673817c2` (see `configs/default.yaml`).
 
-## Quickstart — one command
+## Quickstart — one curl (bare machine)
+
+If you do not have Node/Python yet (or want the Phil-bar path):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh
+```
+
+That prints `[1/6]…[6/6]` progress, installs missing tools (**Fedora/`dnf` first**; **macOS/`brew`** when present), clones to `~/Distillery-Expo` if needed, installs repo deps, and starts Expo at **http://127.0.0.1:5173**.
+
+Already cloned? From the repo root:
+
+```bash
+./scripts/bootstrap.sh
+```
+
+**Private repo:** `curl` of raw `main` and `git clone` may need GitHub auth — run `gh auth login` (or use a token / `GIT_ASKPASS`) first, then retry.
+
+### Day-to-day (toolchain already present)
 
 ```bash
 ./scripts/dev-up
@@ -25,7 +43,12 @@ Dongle default: `3e2de7ed673817c2` (see `configs/default.yaml`).
 
 Opens **http://127.0.0.1:5173**. Then: **Pull mici route** → **Pack shards**.
 
-`scripts/dev-up` (POSIX sh, Fedora-first, portable): checks `python3` / `node` / `npm`, creates `.venv` if needed, `pip install -e ".[dev]"`, `npm install` in `apps/web` if needed, starts API (:8000) + web (:5173). Safe to re-run. macOS (incl. Apple Silicon) is a near-term follow-on — same script shape, no apt/glibc hard-coding.
+| Script | Role |
+|--------|------|
+| `scripts/bootstrap.sh` | Bare machine: system toolchain + venv/pip/npm + launch Expo |
+| `scripts/dev-up` | After python3/node/npm exist: venv + deps + launch. On Fedora, auto-`dnf` installs missing tools instead of only dying |
+
+Both are POSIX sh, Fedora-first, portable (no apt-only / glibc-only hard-coding). Safe to re-run.
 
 ### Manual two-terminal (optional)
 
@@ -106,7 +129,7 @@ Distillery-Expo/
 
 ## Ship path (teach → train → export → eval → gated flash)
 
-Expo primary. One-command: `./scripts/dev-up` then use Expo or:
+Expo primary. One-command: `./scripts/bootstrap.sh` (bare) or `./scripts/dev-up` then use Expo or:
 
 | Method | Path | Notes |
 |--------|------|-------|
@@ -133,7 +156,7 @@ WS: `/ws/jobs/{id}` (same bus as ingest/shard).
 | Rich dark Expo GUI + **Shard pane UX** | |
 | `dex routes` / `dex ingest` / `dex demo` | |
 | Gated flash UI confirm (unchanged) | |
-| `./scripts/dev-up` one-command launcher | |
+| `./scripts/bootstrap.sh` / `./scripts/dev-up` one-command bring-up | |
 
 See `docs/ARCHITECTURE.md` for M1 ingest notes.
 

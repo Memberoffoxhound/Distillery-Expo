@@ -13,5 +13,5 @@ result = await run_export_pipeline(job_id, emit, tick=0.0)
 
 - Prefers real ONNX via the optional `onnx` package.
 - Otherwise writes a minimal `.onnx` protobuf stub **plus**
-  `student_modelV2_io.onnx.json` sidecar documenting I/O shapes.
-- Output: `artifacts/export/student_modelV2_io.onnx`
+  `driving_supercombo.onnx.json` sidecar documenting I/O shapes.
+- Output: `artifacts/export/driving_supercombo.onnx`

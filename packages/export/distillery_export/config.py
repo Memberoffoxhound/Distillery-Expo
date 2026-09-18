@@ -20,7 +20,7 @@ class ExportConfig:
     output_dir: Path = field(
         default_factory=lambda: _REPO_ROOT / "artifacts" / "export"
     )
-    artifact_name: str = "student_modelV2_io.onnx"
+    artifact_name: str = "driving_supercombo.onnx"
     repo_root: Path = field(default_factory=lambda: _REPO_ROOT)
 
 
@@ -44,7 +44,7 @@ def load_export_config(config_path: Path | str | None = None) -> ExportConfig:
     out_path = Path(out)
     if not out_path.is_absolute():
         out_path = _REPO_ROOT / out_path
-    name = str(block.get("artifact_name") or "student_modelV2_io.onnx")
+    name = str(block.get("artifact_name") or "driving_supercombo.onnx")
     return ExportConfig(
         student_dir=student_path,
         output_dir=out_path,

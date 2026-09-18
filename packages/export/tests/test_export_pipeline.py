@@ -17,7 +17,7 @@ def test_model_v2_io_documented():
 
 
 def test_write_onnx_creates_artifact(tmp_path: Path):
-    result = write_onnx_artifact(tmp_path, "student_modelV2_io.onnx")
+    result = write_onnx_artifact(tmp_path, "driving_supercombo.onnx")
     onnx_path = Path(result["onnx_path"])
     sidecar = Path(result["sidecar_path"])
     assert onnx_path.is_file()

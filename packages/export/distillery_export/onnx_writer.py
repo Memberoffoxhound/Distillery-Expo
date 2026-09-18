@@ -120,7 +120,7 @@ def _write_real_onnx_model_v2(path: Path) -> bool:
 
 def write_onnx_artifact(
     output_dir: Path,
-    artifact_name: str = "student_modelV2_io.onnx",
+    artifact_name: str = "driving_supercombo.onnx",
     *,
     student_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:

@@ -25,7 +25,7 @@ If you do not have Node/Python yet (or want the bare-machine path), run the publ
 curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh
 ```
 
-Works on **Fedora** (`dnf`), **macOS** (`brew`), and **Steam Deck / Arch / SteamOS** (`pacman`; unlocks read-only root when needed).
+Works on **Fedora** (`dnf`), **macOS** (`brew`), and **Steam Deck / Arch / SteamOS** (`pacman`; unlocks read-only root + initializes the pacman keyring when needed).
 
 **Or** — clone, then run locally (update-aware):
 
@@ -34,7 +34,9 @@ git clone https://github.com/Memberoffoxhound/Distillery-Expo.git ~/Distillery-E
 cd ~/Distillery-Expo && ./scripts/bootstrap.sh
 ```
 
-That prints `[1/7]…[7/7]` progress, installs missing tools (**Fedora/`dnf` first**; **macOS/`brew`** when present), clones to `~/Distillery-Expo` if needed, installs repo deps, and starts Expo at **http://127.0.0.1:5173**.
+That prints `[1/7]…[7/7]` progress, installs missing tools (**Fedora/`dnf`**, **Steam Deck / Arch/`pacman`**, **macOS/`brew`**), clones to `~/Distillery-Expo` if needed, installs repo deps, and starts Expo at **http://127.0.0.1:5173**.
+
+**Steam Deck / SteamOS (existing checkout):** `git pull` then re-run `./scripts/bootstrap.sh`. Bootstrap runs `steamos-readonly disable`, then **automatic** `pacman-key --init` / `--populate` (`archlinux`, plus `steamos` / `holo` when those keyrings exist), then installs python/node via pacman. No manual keyring steps in the happy path. Desktop mode + sudo password recommended.
 
 Already cloned? From the repo root:
 

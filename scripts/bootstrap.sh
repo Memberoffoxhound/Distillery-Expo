@@ -131,7 +131,7 @@ On Steam Deck Desktop, fix the keyring, then re-run ./scripts/bootstrap.sh:
   # if these keyrings exist on your Deck:
   sudo pacman-key --populate steamos
   sudo pacman-key --populate holo
-  sudo pacman -Sy --needed python python-pip python-virtualenv nodejs npm
+  sudo pacman -Sy --needed python python-pip python-virtualenv nodejs npm android-tools
 
 Prefer fixing pacman. If you must unblock without it: install Node LTS
 (https://nodejs.org) and Python 3 with venv another way, then re-run
@@ -187,20 +187,91 @@ ensure_pacman_keyring() {
   fi
 }
 
+
+# ADB (android-tools / android-platform-tools) — same class of dep as python/node.
+# Idempotent: skip when `adb` already on PATH. Reuses Deck readonly + pacman-key.
+ensure_adb() {
+  if have_cmd adb; then
+    _adb_ver=$(adb version 2>/dev/null | head -n 1 || echo "on PATH")
+    info "  adb already present: ${_adb_ver}"
+    return 0
+  fi
+
+  info "  missing \`adb\` — installing (Fedora/Arch: android-tools · macOS: android-platform-tools)"
+
+  case "$OS" in
+    linux)
+      if is_fedora_like || have_cmd dnf || have_cmd microdnf; then
+        DNF=dnf
+        have_cmd dnf || DNF=microdnf
+        info "  Fedora/dnf install: android-tools"
+        info "  (may prompt for sudo password)"
+        if have_cmd sudo; then
+          sudo "$DNF" install -y android-tools
+        else
+          "$DNF" install -y android-tools
+        fi
+      elif is_arch_like || have_cmd pacman; then
+        if is_steamos || have_cmd steamos-readonly; then
+          info "  Steam Deck / SteamOS — writable root, then keyring, then pacman (android-tools)"
+          maybe_disable_steamos_readonly
+        else
+          info "  Arch/pacman install: android-tools"
+        fi
+        ensure_pacman_keyring
+        info "  pacman -Sy --needed android-tools"
+        info "  (may prompt for sudo password)"
+        if ! pacman_sudo pacman -Sy --needed --noconfirm android-tools; then
+          warn "  pacman -Sy failed after keyring setup (android-tools)"
+          die_pacman_keyring_help
+        fi
+      else
+        warn "  adb not found and no dnf/pacman — install android-tools manually for ADB discovery"
+        warn "  Expo will still start; GET /dongle will report adb_status=not_on_path until adb is installed"
+        return 0
+      fi
+      ;;
+    macos)
+      if have_cmd brew; then
+        info "  Homebrew install: android-platform-tools"
+        brew install android-platform-tools
+      else
+        die "macOS: Homebrew not found. Install from https://brew.sh then:
+  brew install android-platform-tools
+  ./scripts/bootstrap.sh"
+      fi
+      ;;
+    *)
+      warn "  adb not found on unsupported OS ($OS) — install platform-tools manually if you need ADB discovery"
+      return 0
+      ;;
+  esac
+
+  if have_cmd adb; then
+    _adb_ver=$(adb version 2>/dev/null | head -n 1 || echo "installed")
+    info "  adb installed OK: ${_adb_ver}"
+  else
+    die "adb still missing after install.
+  Fedora / RHEL:   sudo dnf install -y android-tools
+  Arch / SteamOS:  sudo pacman -Sy --needed android-tools
+  macOS:           brew install android-platform-tools"
+  fi
+}
+
 die_missing_pkg_manager() {
   die "Missing python3/node/npm and no supported package manager found.
 
 Install the toolchain, then re-run ./scripts/bootstrap.sh (or ./scripts/dev-up):
 
-  Fedora / RHEL:   sudo dnf install -y python3 python3-pip nodejs npm
+  Fedora / RHEL:   sudo dnf install -y python3 python3-pip nodejs npm android-tools
   Arch / SteamOS:  sudo steamos-readonly disable   # Steam Deck only
                    sudo pacman-key --init
                    sudo pacman-key --populate archlinux
-                   sudo pacman -Sy --needed python python-pip python-virtualenv nodejs npm
-  macOS:           brew install python node
+                   sudo pacman -Sy --needed python python-pip python-virtualenv nodejs npm android-tools
+  macOS:           brew install python node android-platform-tools
                    (install Homebrew from https://brew.sh if needed)
 
-Or install python3, pip/venv, node, and npm another way, then re-run."
+Or install python3, pip/venv, node, npm, and adb another way, then re-run."
 }
 
 REPO_URL="${DISTILLERY_REPO_URL:-https://github.com/Memberoffoxhound/Distillery-Expo.git}"
@@ -304,7 +375,7 @@ update_existing_checkout() {
 update_existing_checkout
 
 # --- [3] System toolchain ---
-step "Check / install system toolchain (python3, pip, venv, node, npm)"
+step "Check / install system toolchain (python3, pip, venv, node, npm, adb)"
 
 need_python=0
 need_node=0
@@ -452,6 +523,9 @@ else
   info "    python3 $(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
   info "    node $(node -v) · npm $(npm -v)"
 fi
+
+# ADB: install when missing even if python/node were already present
+ensure_adb
 
 # --- [4] Python venv ---
 step "Python virtualenv (.venv)"

@@ -34,9 +34,9 @@ git clone https://github.com/Memberoffoxhound/Distillery-Expo.git ~/Distillery-E
 cd ~/Distillery-Expo && ./scripts/bootstrap.sh
 ```
 
-That prints `[1/7]…[7/7]` progress, installs missing tools (**Fedora/`dnf`**, **Steam Deck / Arch/`pacman`**, **macOS/`brew`**), clones to `~/Distillery-Expo` if needed, installs repo deps, and starts Expo at **http://127.0.0.1:5173**.
+That prints `[1/7]…[7/7]` progress, installs missing tools (**Fedora/`dnf`**, **Steam Deck / Arch/`pacman`**, **macOS/`brew`**) including **`adb`** (`android-tools` / Homebrew `android-platform-tools`) when not on PATH, clones to `~/Distillery-Expo` if needed, installs repo deps, and starts Expo at **http://127.0.0.1:5173**.
 
-**Steam Deck / SteamOS (existing checkout):** `git pull` then re-run `./scripts/bootstrap.sh`. Bootstrap runs `steamos-readonly disable`, then **automatic** `pacman-key --init` / `--populate` (`archlinux`, plus `steamos` / `holo` when those keyrings exist), then installs python/node via pacman. No manual keyring steps in the happy path. Desktop mode + sudo password recommended.
+**Steam Deck / SteamOS (existing checkout):** `git pull` then re-run `./scripts/bootstrap.sh`. Bootstrap runs `steamos-readonly disable`, then **automatic** `pacman-key --init` / `--populate` (`archlinux`, plus `steamos` / `holo` when those keyrings exist), then installs python/node/`android-tools` (adb) via pacman. No manual keyring steps in the happy path. Desktop mode + sudo password recommended.
 
 Already cloned? From the repo root:
 
@@ -55,7 +55,7 @@ Opens **http://127.0.0.1:5173**. Then: **Pull mici route** → **Pack shards**.
 | Script | Role |
 |--------|------|
 | `scripts/bootstrap.sh` | Bare machine: system toolchain + venv/pip/npm + launch Expo |
-| `scripts/dev-up` | After python3/node/npm exist: venv + deps + launch. On Fedora/`dnf` or Arch/SteamOS/`pacman` (keyring init/populate before install), auto-installs missing tools instead of only dying |
+| `scripts/dev-up` | After python3/node/npm exist: venv + deps + launch. On Fedora/`dnf` or Arch/SteamOS/`pacman` (keyring init/populate before install), auto-installs missing tools (incl. `adb`/`android-tools`) instead of only dying |
 
 Both are POSIX sh, Fedora-first + Arch/Steam Deck + macOS, portable (no apt-only / glibc-only hard-coding). Safe to re-run.
 

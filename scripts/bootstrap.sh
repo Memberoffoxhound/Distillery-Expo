@@ -1,11 +1,20 @@
 #!/usr/bin/env sh
-# Distillery Expo — one-curl bootstrap (system toolchain + deps + Expo)
+# Distillery Expo — bootstrap (system toolchain + deps + Expo)
 #
-# Phil bar: one curl|sh that installs everything with progress and lands in Expo.
+# Phil bar: one authenticated pipe|sh (or local ./scripts/bootstrap.sh) that
+# installs everything with progress and lands in Expo.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh
+# This repo is PRIVATE. Naked raw.githubusercontent.com URLs 404 — never advertise them.
+# Prefer (requires `gh auth login`):
 #
-# Or after clone:
+#   gh api repos/Memberoffoxhound/Distillery-Expo/contents/scripts/bootstrap.sh?ref=main --jq .content | base64 -d | sh
+#
+# Or authenticated raw:
+#
+#   curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
+#     "https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh" | sh
+#
+# Or after clone (update-aware):
 #   ./scripts/bootstrap.sh
 #
 # Design:
@@ -15,8 +24,6 @@
 #   - Safe to re-run
 #   - If already inside Distillery-Expo (or $DISTILLERY_HOME), use it and
 #     git fetch + pull --ff-only before refreshing deps; else clone to ~/Distillery-Expo
-#
-# Private-repo note: curl raw / git clone may need `gh auth login` or a token.
 
 set -eu
 

@@ -49,13 +49,14 @@ prefer=auto:  Connect (COMMA_JWT) → SSH (MICI_SSH_HOST) → fixture
 - **SSH** — lists `/data/media/0/realdata` on mici; maps hevc filenames → road/wide/driver.
 - **Fixture** — offline / CI; `packages/ingest/fixtures/sample_route.json` is Connect-shaped and labeled `meta.fixture` / `meta.label=fixture`. Samples keep `placeholder=true`.
 
-Dongle resolved from `configs/default.yaml` (`3e2de7ed673817c2`) or `DISTILLERY_DONGLE_ID`.
+Dongle resolved from `DISTILLERY_DONGLE_ID`, `.cache/dongle_id` (POST `/dongle` Save), or optional YAML — **empty until set** (no demo default). Fixture routes may still use labeled sample id `3e2de7ed673817c2`. See `docs/dongle-id-contract.json`.
 
 ### API (simple-user path)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/dongle` | Resolved dongle + cam list + cred availability |
+| `GET` | `/dongle` | Saved dongle (or null) + cam list + cred/ADB availability |
+| `POST` | `/dongle` | Body `{dongle_id, persist?}` → env + `.cache/dongle_id` |
 | `GET` | `/routes?source=auto` | List routes |
 | `GET` | `/routes/{route_id}` | Route detail + segments/cams |
 | `POST` | `/jobs/ingest` | Body `{route_id?, source?}` → ingest-only job |

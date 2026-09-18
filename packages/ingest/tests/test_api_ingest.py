@@ -25,11 +25,16 @@ def test_health(client):
     assert r.json()["status"] == "ok"
 
 
-def test_dongle(client):
+def test_dongle(client, tmp_path, monkeypatch):
+    monkeypatch.setattr("distillery_ingest.discover._DONGLE_CACHE", tmp_path / "dongle_id")
+    monkeypatch.setattr("distillery_ingest.config._DONGLE_CACHE", tmp_path / "dongle_id")
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
     r = client.get("/dongle")
     assert r.status_code == 200
     data = r.json()
-    assert data["dongle_id"] == "3e2de7ed673817c2"
+    # No hardcoded demo dongle as user-facing default
+    assert data.get("dongle_id") in (None, "")
+    assert data.get("configured") is False
     assert "cams" in data
     assert "connect_available" in data
     assert "ssh_available" in data
@@ -45,9 +50,10 @@ def test_list_routes_fixture(client):
     assert r.status_code == 200
     data = r.json()
     assert data["source"] == "fixture"
-    assert data["dongle_id"] == "3e2de7ed673817c2"
     assert len(data["routes"]) >= 1
     assert data["routes"][0]["meta"].get("fixture") is True or data["routes"][0]["meta"].get("label") == "fixture"
+    # Fixture last-resort stays labeled; sample route keeps its fixture dongle id
+    assert data["routes"][0]["dongle_id"] == "3e2de7ed673817c2"
 
 
 def test_ingest_job_streams_samples(client):
@@ -220,6 +226,7 @@ def test_routes_ssh_empty_honest(monkeypatch, tmp_path):
     monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
     monkeypatch.setenv("MICI_SSH_HOST", "192.168.1.50")
     monkeypatch.setenv("MICI_SSH_USER", "comma")
+    monkeypatch.setenv("DISTILLERY_DONGLE_ID", "aabbccddeeff0011")
     # Isolate from on-disk JWT / ssh caches that would change posture
     monkeypatch.setattr(
         "distillery_ingest.discover._SSH_CACHE",
@@ -256,6 +263,7 @@ def test_routes_ssh_empty_honest(monkeypatch, tmp_path):
 def test_routes_ssh_error_honest(monkeypatch, tmp_path):
     monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
     monkeypatch.setenv("MICI_SSH_HOST", "10.0.0.9")
+    monkeypatch.setenv("DISTILLERY_DONGLE_ID", "aabbccddeeff0011")
     monkeypatch.setattr(
         "distillery_ingest.discover._SSH_CACHE",
         tmp_path / "ssh_config.json",
@@ -285,3 +293,103 @@ def test_routes_ssh_error_honest(monkeypatch, tmp_path):
     assert "timed out" in (data.get("error") or "").lower() or "timed out" in (
         data.get("message") or ""
     ).lower()
+
+
+def test_dongle_post_save_and_get(client, tmp_path, monkeypatch):
+    cache = tmp_path / "dongle_id"
+    monkeypatch.setattr("distillery_ingest.discover._DONGLE_CACHE", cache)
+    monkeypatch.setattr("distillery_ingest.config._DONGLE_CACHE", cache)
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+
+    g = client.get("/dongle")
+    assert g.status_code == 200
+    assert g.json().get("configured") is False
+
+    p = client.post("/dongle", json={"dongle_id": "aabbccddeeff0011", "persist": True})
+    assert p.status_code == 200
+    body = p.json()
+    assert body["configured"] is True
+    assert body["dongle_id"] == "aabbccddeeff0011"
+    assert body.get("persisted") is True
+    assert cache.is_file()
+    assert cache.read_text(encoding="utf-8").strip() == "aabbccddeeff0011"
+
+    g2 = client.get("/dongle")
+    assert g2.json()["dongle_id"] == "aabbccddeeff0011"
+
+
+def test_routes_connect_unset_dongle_honest(monkeypatch, tmp_path):
+    """source=connect with no saved dongle → honest gap, never fixture dongle."""
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+    monkeypatch.setenv("COMMA_JWT", "testjwtTOKEN12345678")
+    monkeypatch.setattr("distillery_ingest.discover._DONGLE_CACHE", tmp_path / "dongle_id")
+    monkeypatch.setattr("distillery_ingest.config._DONGLE_CACHE", tmp_path / "dongle_id")
+    monkeypatch.setattr("distillery_ingest.discover._JWT_CACHE", tmp_path / "connect_jwt")
+    monkeypatch.setattr("distillery_ingest.discover._SSH_CACHE", tmp_path / "ssh.json")
+
+    from api.main import app
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as c:
+        r = c.get("/routes", params={"source": "connect", "limit": 10})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["source"] == "connect"
+    assert data["routes"] == []
+    assert data.get("empty_reason") == "dongle_id_required"
+    assert "Dongle ID required" in (data.get("message") or "")
+    assert data.get("dongle_id") in (None, "")
+    assert not any(
+        (row.get("meta") or {}).get("fixture") or row.get("source") == "fixture"
+        for row in data["routes"]
+    )
+
+
+def test_routes_connect_uses_saved_dongle_id(monkeypatch, tmp_path):
+    """POST /dongle then source=connect uses the saved id (mocked Connect list)."""
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+    monkeypatch.setenv("COMMA_JWT", "testjwtTOKEN12345678")
+    cache = tmp_path / "dongle_id"
+    monkeypatch.setattr("distillery_ingest.discover._DONGLE_CACHE", cache)
+    monkeypatch.setattr("distillery_ingest.config._DONGLE_CACHE", cache)
+    monkeypatch.setattr("distillery_ingest.discover._JWT_CACHE", tmp_path / "connect_jwt")
+    monkeypatch.setattr("distillery_ingest.discover._SSH_CACHE", tmp_path / "ssh.json")
+
+    from distillery_ingest.models import RouteInfo
+    from distillery_ingest.sources.connect import ConnectRouteSource
+
+    seen: dict = {}
+
+    def _list(self, *, limit=20):
+        seen["dongle_id"] = self.cfg.dongle_id
+        return [
+            RouteInfo(
+                route_id=f"{self.cfg.dongle_id}|2024-01-01--00-00-00",
+                dongle_id=self.cfg.dongle_id,
+                display_name="live-route",
+                source="connect",
+                segment_count=1,
+                meta={"fixture": False, "label": "connect"},
+            )
+        ]
+
+    monkeypatch.setattr(ConnectRouteSource, "list_routes", _list)
+
+    from api.main import app
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as c:
+        p = c.post("/dongle", json={"dongle_id": "deadbeefcafebabe", "persist": True})
+        assert p.status_code == 200
+        assert p.json()["dongle_id"] == "deadbeefcafebabe"
+        r = c.get("/routes", params={"source": "connect", "limit": 5})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["source"] == "connect"
+    assert data["dongle_id"] == "deadbeefcafebabe"
+    assert seen.get("dongle_id") == "deadbeefcafebabe"
+    assert len(data["routes"]) == 1
+    assert data["routes"][0]["dongle_id"] == "deadbeefcafebabe"
+    assert data["routes"][0]["meta"].get("fixture") is not True

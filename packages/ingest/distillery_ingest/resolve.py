@@ -61,7 +61,7 @@ def resolve_source(
     if prefer == "ssh":
         return ssh
 
-    # auto: Connect → SSH → fixture
+    # auto: Connect → SSH → labeled fixture (last resort)
     if connect.available():
         return connect
     if ssh.available():
@@ -75,12 +75,16 @@ def _ssh_empty_message(cfg: IngestConfig, *, error: str | None = None) -> tuple[
         return f"SSH error · {error}", "ssh_error"
     if not cfg.ssh_host:
         return "SSH not configured · set host (Save SSH) then refresh", "ssh_not_configured"
+    if not (cfg.dongle_id or "").strip():
+        return "Dongle ID required · set via GUI Save", "dongle_id_required"
     return f"SSH ok · 0 routes under {REALDATA}", "empty_realdata"
 
 
 def _connect_empty_message(cfg: IngestConfig, *, error: str | None = None) -> tuple[str, str]:
     if error:
         return f"Connect error · {error}", "connect_error"
+    if not (cfg.dongle_id or "").strip():
+        return "Dongle ID required · set via GUI Save", "dongle_id_required"
     if not cfg.connect_jwt:
         return "Connect not configured · paste JWT then Save", "connect_not_configured"
     return "Connect ok · 0 routes for this dongle", "empty_connect"
@@ -96,12 +100,26 @@ def list_routes(
 
     Explicit prefer=ssh|connect: never silently fall back to fixture on empty
     or error — return honest empty + message/empty_reason/error.
+    Missing dongle on Connect/SSH → dongle_id_required (not fixture dongle).
     prefer=auto (and missing creds): still falls back to labeled fixture.
     """
     cfg = cfg or load_ingest_config()
     # force_fixture already handled inside resolve_source
     source = resolve_source(cfg, prefer=prefer)
     explicit = prefer in _EXPLICIT_LIVE and not cfg.force_fixture
+
+    # Honest gap before hitting Connect/SSH when dongle unset
+    if explicit and not (cfg.dongle_id or "").strip():
+        if prefer == "ssh":
+            msg, reason = _ssh_empty_message(cfg)
+        else:
+            msg, reason = _connect_empty_message(cfg)
+        return ListRoutesResult(
+            source=source,
+            routes=[],
+            message=msg,
+            empty_reason=reason,
+        )
 
     try:
         routes = source.list_routes(limit=limit)
@@ -158,6 +176,8 @@ def get_route(
     cfg = cfg or load_ingest_config()
     source = resolve_source(cfg, prefer=prefer)
     explicit = prefer in _EXPLICIT_LIVE and not cfg.force_fixture
+    if explicit and not (cfg.dongle_id or "").strip():
+        raise LookupError("dongle_id required · set via GUI Save")
     try:
         route = source.get_route(route_id)
         if route is not None:

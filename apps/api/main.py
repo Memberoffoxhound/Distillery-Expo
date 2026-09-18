@@ -26,9 +26,11 @@ from distillery_ingest.discover import (
     apply_discovered_overrides,
     connect_status,
     discovery_overview,
+    dongle_status,
     list_adb_devices,
     probe_ssh,
     set_connect_jwt,
+    set_dongle_id,
     set_ssh_config,
     ssh_status,
 )
@@ -158,6 +160,12 @@ class SshConfigRequest(BaseModel):
     identity_path: str | None = None
     persist: bool = True
     test: bool = False
+
+
+class DongleIdRequest(BaseModel):
+    """Set mici dongle id without DISTILLERY_DONGLE_ID scavenger hunt."""
+    dongle_id: str = Field(..., min_length=1)
+    persist: bool = True
 
 
 # In-memory job store
@@ -1154,8 +1162,12 @@ async def list_stages() -> dict[str, list[str]]:
 
 @app.get("/dongle")
 async def get_dongle() -> dict[str, Any]:
-    """Dongle + Connect/SSH posture, plus ADB readiness for Expo status chips."""
-    cfg = load_ingest_config()
+    """Dongle + Connect/SSH posture, plus ADB readiness for Expo status chips.
+
+    dongle_id is null/empty until POST /dongle (or DISTILLERY_DONGLE_ID / .cache).
+    Never returns a hardcoded demo dongle as the default.
+    """
+    status = dongle_status()
     adb = list_adb_devices()
     adb_available = bool(adb.get("adb_available"))
     devices = adb.get("devices") or []
@@ -1166,11 +1178,31 @@ async def get_dongle() -> dict[str, Any]:
     else:
         adb_status = "ready"
     return {
-        "dongle_id": cfg.dongle_id,
-        "cams": list(cfg.cams),
-        "connect_available": cfg.connect_available,
-        "ssh_available": cfg.ssh_available,
-        "force_fixture": cfg.force_fixture,
+        **status,
+        "adb_available": adb_available,
+        "adb_status": adb_status,
+        "adb_device_count": len(devices),
+    }
+
+
+@app.post("/dongle")
+async def post_dongle(body: DongleIdRequest) -> dict[str, Any]:
+    """Set/use dongle id (process env + optional .cache/dongle_id; not committed)."""
+    try:
+        status = set_dongle_id(body.dongle_id, persist=body.persist)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    adb = list_adb_devices()
+    adb_available = bool(adb.get("adb_available"))
+    devices = adb.get("devices") or []
+    if not adb_available:
+        adb_status = "not_on_path"
+    elif not adb.get("ok", False):
+        adb_status = "error"
+    else:
+        adb_status = "ready"
+    return {
+        **status,
         "adb_available": adb_available,
         "adb_status": adb_status,
         "adb_device_count": len(devices),
@@ -1376,6 +1408,14 @@ async def get_ready(
                 {
                     "code": "connect_not_configured",
                     "message": "Connect JWT not configured — POST /discover/connect or use fixture",
+                }
+            )
+        dongle = dongle_status()
+        if not dongle.get("configured") and not (allow_toy or force_fixture):
+            extra.append(
+                {
+                    "code": "dongle_id_required",
+                    "message": "Dongle ID required — POST /dongle (GUI Save) then refresh",
                 }
             )
     except Exception as exc:  # noqa: BLE001

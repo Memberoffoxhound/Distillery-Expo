@@ -1,6 +1,6 @@
 # packages/ingest
 
-**M1 thin slice:** Pull mici routes via **comma Connect** and/or **local SSH**, resolve dongle from `configs/default.yaml`, list segments, and emit `stage=ingest` progress + cam `sample` events onto the shared Distillery event bus.
+**M1 thin slice:** Pull mici routes via **comma Connect** and/or **local SSH**, resolve dongle from env / `.cache` (GUI Save), list segments, and emit `stage=ingest` progress + cam `sample` events onto the shared Distillery event bus.
 
 ## Sources (priority)
 
@@ -12,7 +12,7 @@
 
 Fixture routes are **truthful-shaped** (Connect-like `route_id`, segments, per-cam hevc metadata) and labeled `meta.fixture` / `meta.label=fixture` with `placeholder=true` on samples.
 
-Default dongle: `3e2de7ed673817c2`.
+Dongle: empty until `POST /dongle` / `DISTILLERY_DONGLE_ID` / `.cache/dongle_id`. Fixture sample may use labeled id `3e2de7ed673817c2`.
 
 ## Event contract
 

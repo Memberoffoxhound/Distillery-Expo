@@ -210,3 +210,164 @@ def test_teachers_pull_never_small_on_offline(client, monkeypatch, tmp_path):
     assert warns
     assert BIG_TEACHER_NAME in (warns[0].get("payload") or {}).get("label", "")
     assert not (tmp_path / "driving_supercombo.onnx").exists()
+
+def test_teachers_pull_consume_live_after_ensure(client, monkeypatch, tmp_path):
+    """After ensure writes cache, consume checksum-verifies → live comma master label."""
+    monkeypatch.delenv("DISTILLERY_TEACHER_FIXTURE", raising=False)
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+
+    import hashlib
+    from api import main as api_main
+    import distillery_teacher.download as dl
+    from distillery_teacher.download import TeacherArtifactStatus
+
+    body = b"BIG_TEACHER_LIVE_WEIGHTS_FOR_CONSUME_BIND" * 80
+    onnx = tmp_path / "big_driving_supercombo.onnx"
+    onnx.write_bytes(body)
+    digest = hashlib.sha256(body).hexdigest()
+    (tmp_path / "big_driving_supercombo.onnx.sha256").write_text(digest + "\n")
+
+    def _ensure(dest_dir=None, *, force_fixture=False, force_download=False, progress=None, **_k):
+        if progress:
+            progress(0.5, "download big_driving_supercombo …")
+        # Write into default teachers dir consume will read — point DEFAULT via monkeypatch
+        return TeacherArtifactStatus(
+            ok=True,
+            live=True,
+            cached=True,
+            path=onnx,
+            sha256=digest,
+            source="commaai/openpilot@master",
+            label=f"comma master · {BIG_TEACHER_NAME}",
+            detail="ensured",
+            bytes=len(body),
+        )
+
+    monkeypatch.setattr(dl, "ensure_big_teacher_onnx", _ensure)
+    monkeypatch.setattr(dl, "DEFAULT_TEACHERS_DIR", tmp_path)
+    monkeypatch.setattr(
+        "distillery_teacher.consume.teachers_dir", lambda root=None: tmp_path if root is None else root
+    )
+    monkeypatch.setattr(
+        "distillery_teacher.download.teachers_dir", lambda root=None: tmp_path if root is None else root
+    )
+    # Also patch artifact_paths resolution used by consume
+    monkeypatch.setattr(
+        "distillery_teacher.consume.artifact_paths",
+        lambda dest_dir=None: (
+            tmp_path / "big_driving_supercombo.onnx",
+            tmp_path / "big_driving_supercombo.onnx.sha256",
+            tmp_path / "big_driving_supercombo.json",
+        ),
+    )
+    monkeypatch.setattr(
+        "distillery_teacher.download.artifact_paths",
+        lambda dest_dir=None: (
+            tmp_path / "big_driving_supercombo.onnx",
+            tmp_path / "big_driving_supercombo.onnx.sha256",
+            tmp_path / "big_driving_supercombo.json",
+        ),
+    )
+
+    r = client.post("/teachers/pull", json={})
+    assert r.status_code == 200
+    job_id = r.json()["id"]
+    events = client.get(f"/jobs/{job_id}/events").json()["events"]
+    verify = [
+        e
+        for e in events
+        if e.get("kind") == "progress"
+        and "verify checksum" in str((e.get("payload") or {}).get("detail") or "")
+    ]
+    assert verify, "expected consume verify progress event"
+    done = [
+        e
+        for e in events
+        if e.get("kind") == "stage" and (e.get("payload") or {}).get("status") == "done"
+    ]
+    assert done
+    payload = done[-1].get("payload") or {}
+    assert payload.get("live") is True
+    assert "comma master" in (payload.get("detail") or payload.get("label") or "")
+    teacher = payload.get("teacher") or {}
+    assert teacher.get("name") == BIG_TEACHER_NAME
+    assert teacher.get("live") is True
+    # final progress carries consumed flag
+    finals = [
+        e
+        for e in events
+        if e.get("kind") == "progress" and (e.get("payload") or {}).get("fraction") == 1.0
+    ]
+    assert finals
+    assert (finals[-1].get("payload") or {}).get("consumed") is True
+    assert (finals[-1].get("payload") or {}).get("live") is True
+
+
+def test_teachers_pull_consume_checksum_fail_stays_fixture(client, monkeypatch, tmp_path):
+    """Corrupt sidecar → consume fixtures; never silent small model / never pretend live."""
+    monkeypatch.delenv("DISTILLERY_TEACHER_FIXTURE", raising=False)
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+
+    import distillery_teacher.download as dl
+    from distillery_teacher.download import TeacherArtifactStatus
+
+    body = b"TAMPERED_OR_CORRUPT_BIG_TEACHER" * 80
+    onnx = tmp_path / "big_driving_supercombo.onnx"
+    onnx.write_bytes(body)
+    (tmp_path / "big_driving_supercombo.onnx.sha256").write_text(("0" * 64) + "\n")
+    # small model present must be ignored
+    (tmp_path / "driving_supercombo.onnx").write_bytes(b"SMALL" * 400)
+
+    def _ensure(dest_dir=None, *, force_fixture=False, force_download=False, progress=None, **_k):
+        if progress:
+            progress(0.6, "download done")
+        return TeacherArtifactStatus(
+            ok=True,
+            live=True,  # ensure claims live — consume must overturn
+            cached=True,
+            path=onnx,
+            sha256="0" * 64,
+            source="commaai/openpilot@master",
+            label=f"comma master · {BIG_TEACHER_NAME}",
+            detail="ensured-but-bad-sha",
+            bytes=len(body),
+        )
+
+    monkeypatch.setattr(dl, "ensure_big_teacher_onnx", _ensure)
+    paths = (
+        tmp_path / "big_driving_supercombo.onnx",
+        tmp_path / "big_driving_supercombo.onnx.sha256",
+        tmp_path / "big_driving_supercombo.json",
+    )
+    monkeypatch.setattr("distillery_teacher.consume.artifact_paths", lambda dest_dir=None: paths)
+    monkeypatch.setattr("distillery_teacher.download.artifact_paths", lambda dest_dir=None: paths)
+    monkeypatch.setattr(
+        "distillery_teacher.consume.teachers_dir", lambda root=None: tmp_path if root is None else root
+    )
+    monkeypatch.setattr(
+        "distillery_teacher.download.teachers_dir", lambda root=None: tmp_path if root is None else root
+    )
+    monkeypatch.setattr(dl, "cached_big_teacher_ok", lambda dest_dir=None: None)
+
+    r = client.post("/teachers/pull", json={})
+    assert r.status_code == 200
+    job_id = r.json()["id"]
+    events = client.get(f"/jobs/{job_id}/events").json()["events"]
+    done = [
+        e
+        for e in events
+        if e.get("kind") == "stage" and (e.get("payload") or {}).get("status") == "done"
+    ]
+    assert done
+    payload = done[-1].get("payload") or {}
+    assert payload.get("live") is False
+    detail = payload.get("detail") or ""
+    assert "fixture" in detail and BIG_TEACHER_NAME in detail
+    teacher = payload.get("teacher") or {}
+    assert teacher.get("name") == BIG_TEACHER_NAME
+    assert teacher.get("name") != "driving_supercombo"
+    assert teacher.get("live") is False
+    warns = [e for e in events if e.get("kind") == "warning"]
+    assert warns
+    assert (warns[-1].get("payload") or {}).get("code") == "TEACHER_NOT_LIVE"
+

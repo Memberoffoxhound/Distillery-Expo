@@ -68,6 +68,7 @@ def check_train_readiness(
             }
         )
 
+    # force_fixture labels soft-label/data path only — never invents device_not_ready.
     device = probe_train_device(force_fixture=bool(fixture))
     if not device.get("device_ready") and not (toy or fixture):
         gaps.append(

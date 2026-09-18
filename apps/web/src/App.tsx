@@ -4,10 +4,10 @@ import { ThinkingPane } from "./components/ThinkingPane";
 import { CamsPane } from "./components/CamsPane";
 import { LogsPane } from "./components/LogsPane";
 import { IngestPane } from "./components/IngestPane";
+import { ShardPane } from "./components/ShardPane";
 import {
   EvalPane,
   FlashPane,
-  ShardPane,
   TeacherPane,
   TrainPane,
 } from "./components/MetricsBits";

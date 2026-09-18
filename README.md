@@ -3,6 +3,7 @@
 **One-stop tinygrad distill control room** for comma mici routes → Cinque/supercombo teacher (7090 XT) → lighter stock-modelV2-I/O student (mici/QCOM) → export / eval / gated flash.
 
 > **M1** = real mici ingest thin slice (Connect + SSH + fixture) onto the typed event bus.
+> **M2 UX** = Expo Shard pane (calm idle + truthful pack progress on `stage=shard` events). Flash stays gated.
 > M0 demo pipeline still available. No teacher/train/flash work yet — flash stays gated.
 
 ## Hardware (v1)
@@ -94,12 +95,12 @@ Distillery-Expo/
 
 | Included now | Stubbed for later |
 |--------------|-------------------|
-| Event schema + bus | Shard packing |
+| Event schema + bus | Shard packing jobs (Craig) |
 | **mici ingest** (Connect / SSH / fixture) | Teacher on 7090 XT |
 | `GET /routes` + `POST /jobs/ingest` + WS | Student train (tinygrad) |
 | Demo job with staged events | Real export / ONNX / QCOM |
 | FastAPI + WS streaming | Eval harness + real flash |
-| Rich dark Expo GUI | |
+| Rich dark Expo GUI + **Shard pane UX** | |
 | `dex routes` / `dex ingest` / `dex demo` | |
 | Gated flash UI confirm (unchanged) | |
 

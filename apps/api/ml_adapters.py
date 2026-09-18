@@ -815,3 +815,142 @@ def coerce_eval_passed(result: Any) -> bool:
     if isinstance(result, dict):
         return result.get("eval_passed", False) is True
     return getattr(result, "eval_passed", False) is True
+
+
+
+def probe_tinygrad() -> dict[str, Any]:
+    """Probe tinygrad Device — GPU or CPU; never 7090-locked.
+
+    Returns keys consumed by /health and /status/runtime:
+      tinygrad: "ok" | "missing" | "fixture"
+      device: { found, ready, kind, name, backend }
+      mode: "live" | "fixture"
+    """
+    device_blank: dict[str, Any] = {
+        "found": False,
+        "ready": False,
+        "kind": None,
+        "name": None,
+        "backend": None,
+    }
+    try:
+        import tinygrad  # noqa: F401
+        from tinygrad import Device
+    except Exception as exc:  # noqa: BLE001 — import OR init failures
+        return {
+            "tinygrad": "missing",
+            "device": {**device_blank, "error": str(exc)[:200]},
+            "mode": "fixture",
+            "detail": "tinygrad not importable — fixture mode",
+        }
+
+    backend = None
+    name = None
+    kind: str | None = "unknown"
+    ready = False
+    found = False
+    err: str | None = None
+
+    try:
+        backend = str(getattr(Device, "DEFAULT", None) or "CPU")
+        found = True
+        name = backend
+        upper = backend.upper()
+        if any(tok in upper for tok in ("CUDA", "GPU", "HIP", "METAL", "CL", "OPENCL", "AMD", "NV", "INTEL", "QCOM", "VULKAN")):
+            # Exclude pure CPU tokens
+            if upper in ("CPU", "LLVM", "DSP"):
+                kind = "cpu"
+            else:
+                kind = "gpu"
+        elif upper in ("CPU", "LLVM", "DSP") or upper.startswith("CPU"):
+            kind = "cpu"
+        else:
+            kind = "unknown"
+
+        # Touch the device to confirm readiness (best-effort; CPU always ok)
+        try:
+            # Device[backend] materializes; .renderer / stringification is enough signal
+            _dev = Device[backend]
+            ready = _dev is not None
+            # Prefer a richer name when available
+            name = str(getattr(_dev, "name", None) or backend)
+        except Exception as exc:  # noqa: BLE001
+            err = str(exc)[:200]
+            # Still "found" if DEFAULT resolved; readiness false
+            ready = False
+            if kind == "cpu":
+                # CPU backends are usually fine even if Device[] quirks
+                ready = True
+    except Exception as exc:  # noqa: BLE001
+        err = str(exc)[:200]
+        found = False
+        ready = False
+
+    device = {
+        "found": found,
+        "ready": ready,
+        "kind": kind if found else None,
+        "name": name,
+        "backend": backend,
+    }
+    if err:
+        device["error"] = err
+
+    # Live when importable; fixture only when missing. CPU counts as live.
+    mode = "live" if found else "fixture"
+    tg = "ok" if found and ready else ("ok" if found else "missing")
+    if found and not ready:
+        tg = "ok"  # present but not ready — still not "missing"; UI can read device.ready
+    return {
+        "tinygrad": tg if found else "missing",
+        "device": device,
+        "mode": mode if found else "fixture",
+        "detail": None,
+    }
+
+
+def _device_from_student_probe(raw: dict[str, Any]) -> dict[str, Any]:
+    """Map Graig probe_train_device → /health device shape."""
+    return {
+        "found": bool(raw.get("device_found")),
+        "ready": bool(raw.get("device_ready")),
+        "kind": raw.get("device_kind"),
+        "name": raw.get("device_name"),
+        "backend": raw.get("device_name") or raw.get("backend"),
+        "detail": raw.get("detail"),
+        "live": raw.get("live"),
+        "source": raw.get("source"),
+    }
+
+
+def runtime_status() -> dict[str, Any]:
+    """Compose health/runtime payload — prefer Graig probe_train_device."""
+    try:
+        from distillery_student import probe_train_device
+
+        raw = probe_train_device()
+        tg = raw.get("tinygrad") or "missing"
+        mode = "fixture" if tg in ("missing", "fixture") else "live"
+        # CPU counts as live when tinygrad ok
+        if tg == "ok":
+            mode = "live"
+        return {
+            "ok": True,
+            "tinygrad": tg,
+            "device": _device_from_student_probe(raw),
+            "mode": mode,
+            "ml_backends": backend_status(),
+            "detail": raw.get("detail"),
+            "probe": "distillery_student.probe_train_device",
+        }
+    except Exception as exc:  # noqa: BLE001
+        tg = probe_tinygrad()
+        return {
+            "ok": True,
+            "tinygrad": tg["tinygrad"],
+            "device": tg["device"],
+            "mode": tg["mode"],
+            "ml_backends": backend_status(),
+            "detail": tg.get("detail") or f"student probe unavailable: {exc}"[:200],
+            "probe": "local_thin",
+        }

@@ -60,7 +60,18 @@ def load_ingest_config(config_path: Path | str | None = None) -> IngestConfig:
         or str(raw.get("dongle_id") or DEFAULT_DONGLE)
     ).strip()
 
+    # Prefer env; else hydrate from .cache/connect_jwt (set via POST /discover/connect)
     jwt = os.environ.get("COMMA_JWT") or os.environ.get("CONNECT_JWT") or None
+    if not jwt:
+        cache = _REPO_ROOT / ".cache" / "connect_jwt"
+        if cache.is_file():
+            try:
+                cached = cache.read_text(encoding="utf-8").strip()
+            except OSError:
+                cached = ""
+            if cached:
+                jwt = cached
+                os.environ.setdefault("COMMA_JWT", cached)
     ssh_host = os.environ.get("MICI_SSH_HOST") or os.environ.get("COMMA_SSH_HOST") or None
     ssh_user = os.environ.get("MICI_SSH_USER") or os.environ.get("COMMA_SSH_USER") or "comma"
     ssh_key = os.environ.get("MICI_SSH_KEY") or os.environ.get("COMMA_SSH_KEY") or None

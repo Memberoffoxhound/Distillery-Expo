@@ -13,14 +13,14 @@
 #   - Portable toward macOS (Darwin + brew); friendly message if brew missing
 #   - No apt-only paths, no glibc-only assumptions
 #   - Safe to re-run
-#   - If already inside Distillery-Expo, use it; else clone to ~/Distillery-Expo
-#     (or $DISTILLERY_HOME)
+#   - If already inside Distillery-Expo (or $DISTILLERY_HOME), use it and
+#     git fetch + pull --ff-only before refreshing deps; else clone to ~/Distillery-Expo
 #
 # Private-repo note: curl raw / git clone may need `gh auth login` or a token.
 
 set -eu
 
-TOTAL_STEPS=6
+TOTAL_STEPS=7
 STEP=0
 
 info()  { printf '%s\n' "$*"; }
@@ -60,8 +60,8 @@ OS=$(detect_os)
 info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 info "  Distillery Expo — bootstrap (os=$OS)"
 info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-info "This installs system tools (if needed), repo deps, and starts Expo."
-info "Safe to re-run. Progress is printed at each step."
+info "This updates an existing install (or clones), installs system tools if needed,"
+info "refreshes deps, and starts Expo. Safe to re-run. Progress at each step."
 info ""
 
 # --- [1] Resolve repo root (clone if needed) ---
@@ -120,7 +120,38 @@ fi
 cd "$ROOT"
 info "  Repo root: $ROOT"
 
-# --- [2] System toolchain ---
+# --- [2] Update existing checkout (git fetch + ff-only pull) ---
+step "Update checkout (git fetch + pull --ff-only)"
+
+update_existing_checkout() {
+  if ! have_cmd git; then
+    warn "  git not found — skipping update (deps refresh still runs)"
+    return 0
+  fi
+  if [ ! -d "$ROOT/.git" ]; then
+    info "  Not a git checkout — skipping pull (tarball / copied tree)"
+    return 0
+  fi
+  info "  Fetching from remotes …"
+  if ! git -C "$ROOT" fetch --all --prune --progress 2>&1; then
+    warn "  git fetch failed (offline / auth?) — continuing with local tree"
+    return 0
+  fi
+  branch=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+  info "  Branch: $branch"
+  # Prefer fast-forward only so we never invent merges on a user tree
+  if git -C "$ROOT" pull --ff-only --progress 2>&1; then
+    info "  Checkout up to date (ff-only pull OK)"
+    info "  HEAD: $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
+  else
+    warn "  ff-only pull failed (local commits / divergence?). Keeping local tree; resolve manually if needed."
+    info "  HEAD remains: $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
+  fi
+}
+
+update_existing_checkout
+
+# --- [3] System toolchain ---
 step "Check / install system toolchain (python3, pip, venv, node, npm)"
 
 need_python=0
@@ -249,7 +280,7 @@ else
   info "    node $(node -v) · npm $(npm -v)"
 fi
 
-# --- [3] Python venv ---
+# --- [4] Python venv ---
 step "Python virtualenv (.venv)"
 
 VENV_DIR="${DISTILLERY_VENV:-$ROOT/.venv}"
@@ -264,7 +295,7 @@ fi
 . "$VENV_DIR/bin/activate"
 info "  Using $(command -v python) ($(python -c 'import sys; print("%d.%d" % sys.version_info[:2])'))"
 
-# --- [4] pip install ---
+# --- [5] pip install ---
 step "Install Python package (pip install -e \".[dev]\")"
 
 info "  Upgrading pip …"
@@ -273,7 +304,7 @@ info "  Installing editable package + dev extras (this may take a minute) …"
 python -m pip install -e ".[dev]"
 info "  Python deps ready."
 
-# --- [5] npm install ---
+# --- [6] npm install ---
 step "Install web deps (npm install in apps/web)"
 
 WEB_DIR="$ROOT/apps/web"
@@ -284,7 +315,7 @@ info "  Running npm install in $WEB_DIR …"
 (cd "$WEB_DIR" && npm install)
 info "  Web deps ready."
 
-# --- [6] Launch Expo via dev-up ---
+# --- [7] Launch Expo via dev-up ---
 step "Start Expo (API + web) via scripts/dev-up"
 
 if [ ! -x "$ROOT/scripts/dev-up" ]; then

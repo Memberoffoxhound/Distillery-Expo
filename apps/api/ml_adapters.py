@@ -909,14 +909,48 @@ def probe_tinygrad() -> dict[str, Any]:
     }
 
 
-def runtime_status() -> dict[str, Any]:
-    """Compose health/runtime payload (tinygrad-compatible, not 7090-locked)."""
-    tg = probe_tinygrad()
+def _device_from_student_probe(raw: dict[str, Any]) -> dict[str, Any]:
+    """Map Graig probe_train_device → /health device shape."""
     return {
-        "ok": True,
-        "tinygrad": tg["tinygrad"],
-        "device": tg["device"],
-        "mode": tg["mode"],
-        "ml_backends": backend_status(),
-        "detail": tg.get("detail"),
+        "found": bool(raw.get("device_found")),
+        "ready": bool(raw.get("device_ready")),
+        "kind": raw.get("device_kind"),
+        "name": raw.get("device_name"),
+        "backend": raw.get("device_name") or raw.get("backend"),
+        "detail": raw.get("detail"),
+        "live": raw.get("live"),
+        "source": raw.get("source"),
     }
+
+
+def runtime_status() -> dict[str, Any]:
+    """Compose health/runtime payload — prefer Graig probe_train_device."""
+    try:
+        from distillery_student import probe_train_device
+
+        raw = probe_train_device()
+        tg = raw.get("tinygrad") or "missing"
+        mode = "fixture" if tg in ("missing", "fixture") else "live"
+        # CPU counts as live when tinygrad ok
+        if tg == "ok":
+            mode = "live"
+        return {
+            "ok": True,
+            "tinygrad": tg,
+            "device": _device_from_student_probe(raw),
+            "mode": mode,
+            "ml_backends": backend_status(),
+            "detail": raw.get("detail"),
+            "probe": "distillery_student.probe_train_device",
+        }
+    except Exception as exc:  # noqa: BLE001
+        tg = probe_tinygrad()
+        return {
+            "ok": True,
+            "tinygrad": tg["tinygrad"],
+            "device": tg["device"],
+            "mode": tg["mode"],
+            "ml_backends": backend_status(),
+            "detail": tg.get("detail") or f"student probe unavailable: {exc}"[:200],
+            "probe": "local_thin",
+        }

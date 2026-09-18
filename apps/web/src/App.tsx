@@ -5,12 +5,10 @@ import { CamsPane } from "./components/CamsPane";
 import { LogsPane } from "./components/LogsPane";
 import { IngestPane } from "./components/IngestPane";
 import { ShardPane } from "./components/ShardPane";
-import {
-  EvalPane,
-  FlashPane,
-  TeacherPane,
-  TrainPane,
-} from "./components/MetricsBits";
+import { TeacherPane } from "./components/TeacherPane";
+import { TrainPane } from "./components/TrainPane";
+import { EvalPane } from "./components/EvalPane";
+import { FlashPane } from "./components/FlashPane";
 import { useJobStream } from "./hooks/useJobStream";
 import "./styles/app.css";
 
@@ -52,6 +50,13 @@ export default function App() {
           <button
             className="primary"
             disabled={busy}
+            onClick={() => job.startPipeline({ source: "fixture" })}
+            title="POST /jobs/pipeline — teach→train→export→eval→gated flash"
+          >
+            Run distill
+          </button>
+          <button
+            disabled={busy}
             onClick={() => job.startIngest({ source: "fixture" })}
             title="POST /jobs/ingest {source:fixture}"
           >
@@ -67,7 +72,7 @@ export default function App() {
           <button
             disabled={busy}
             onClick={() => job.startDemo()}
-            title="Full M0 staged demo (flash stays gated)"
+            title="Legacy staged demo (flash stays gated)"
           >
             Run demo
           </button>

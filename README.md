@@ -3,7 +3,7 @@
 **One-stop tinygrad distill control room** for comma mici routes → Cinque/supercombo teacher (7090 XT) → lighter stock-modelV2-I/O student (mici/QCOM) → export / eval / gated flash.
 
 > **M2** = shards pack on the typed event bus + one-command launcher (`./scripts/dev-up`).
-> Expo Shard pane binds truthful `stage=shard` progress. Flash stays gated. No teacher/train/flash work yet.
+> Expo Shard / Teacher / Train / Eval / Flash panes bind truthful stage events (demo streams them). Flash stays dual-gated. No `/jobs/teach|train|export|eval` yet — use **Run demo** for the full path.
 
 ## Hardware (v1)
 
@@ -82,7 +82,9 @@ Env for live device paths:
 |-----|---------|
 | `COMMA_JWT` / `CONNECT_JWT` | comma Connect auth |
 | `MICI_SSH_HOST` | mici SSH host |
+| `MICI_SSH_USER` | SSH user (default `comma`) |
 | `MICI_SSH_KEY` | optional SSH key |
+| `MICI_MODEL_PATH` | remote ONNX path (default `/data/openpilot/selfdrive/modeld/models/driving_supercombo.onnx`) |
 | `DISTILLERY_INGEST_FIXTURE=1` | force offline fixture |
 
 ## Layout
@@ -101,6 +103,23 @@ Distillery-Expo/
 ├── configs/default.yaml
 └── docs/ARCHITECTURE.md
 ```
+
+## Ship path (teach → train → export → eval → gated flash)
+
+Expo primary. One-command: `./scripts/dev-up` then use Expo or:
+
+| Method | Path | Notes |
+|--------|------|-------|
+| `POST` | `/jobs/teach` | Soft-labels on bus (`stage=teach`) — Graig teacher or labeled fixture |
+| `POST` | `/jobs/train` | `train_loss` / progress (`stage=train`) |
+| `POST` | `/jobs/export` | ONNX path in logs/metrics (`stage=export`) |
+| `POST` | `/jobs/eval` | Real scorecard metrics; `eval_passed` defaults **false** for fixture |
+| `POST` | `/jobs/pipeline` | Sequential teach→…→eval→**gated** flash |
+| `POST` | `/jobs/{id}/flash/confirm` | **403** unless `eval_passed`; SSH push `driving_supercombo.onnx`; `device_write` only on real scp |
+
+Flash stays locked until eval clears **and** operator confirms. Fixture/offline paths are labeled `live=false` — no greenwashed pass.
+
+WS: `/ws/jobs/{id}` (same bus as ingest/shard).
 
 ## M1 includes / stubbed next
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "distillery-expo"
-version = "0.3.0"
+version = "0.4.0"
 description = "tinygrad distill control room — mici → Cinque/supercombo (7090 XT) → stock-modelV2 student"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,21 +18,27 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["ruff", "pytest"]
+export = ["onnx>=1.14", "numpy>=1.24"]
+dev = ["ruff", "pytest", "onnx>=1.14", "numpy>=1.24"]
 
 [project.scripts]
 dex = "dex.cli:main"
 
 [tool.setuptools]
-packages = ["distillery_events", "distillery_ingest", "distillery_shards", "dex", "api"]
+packages = ["distillery_events", "distillery_ingest", "distillery_shards", "distillery_teacher", "distillery_student", "distillery_export", "distillery_eval", "distillery_deploy", "dex", "api"]
 
 [tool.setuptools.package-dir]
 distillery_events = "packages/events/distillery_events"
 distillery_ingest = "packages/ingest/distillery_ingest"
 distillery_shards = "packages/shards/distillery_shards"
+distillery_teacher = "packages/teacher/distillery_teacher"
+distillery_student = "packages/student/distillery_student"
+distillery_export = "packages/export/distillery_export"
+distillery_eval = "packages/eval/distillery_eval"
+distillery_deploy = "packages/deploy/distillery_deploy"
 dex = "apps/cli/dex"
 api = "apps/api"
 
 [tool.pytest.ini_options]
-testpaths = ["packages/ingest/tests", "packages/shards/tests", "apps/api"]
+testpaths = ["packages/ingest/tests", "packages/shards/tests", "packages/teacher/tests", "packages/student/tests", "packages/export/tests", "packages/eval/tests", "packages/deploy/tests", "apps/api"]
 pythonpath = ["."]

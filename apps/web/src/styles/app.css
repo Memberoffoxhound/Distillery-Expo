@@ -726,6 +726,106 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-size: 0.8rem;
 }
 
+
+/* Shared stage panes (Teacher / Train / Eval) — Shard craft */
+.stage-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  height: 100%;
+  min-height: 0;
+}
+.stage-head { display: flex; flex-direction: column; gap: 0.25rem; }
+.stage-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.stage-headline {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+.stage-status {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-mute);
+  text-transform: lowercase;
+  flex-shrink: 0;
+}
+.stage-status.running,
+.stage-status.teaching,
+.stage-status.training,
+.stage-status.scoring,
+.stage-status.writing {
+  color: var(--info);
+  border-color: rgba(108, 182, 255, 0.35);
+  background: rgba(108, 182, 255, 0.08);
+}
+.stage-status.done,
+.stage-status.ready,
+.stage-status.packed {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: rgba(62, 207, 142, 0.08);
+}
+.stage-status.failed {
+  color: var(--danger);
+  border-color: rgba(255, 107, 107, 0.35);
+  background: rgba(255, 107, 107, 0.08);
+}
+.stage-status.gated,
+.stage-status.confirm {
+  color: var(--warn);
+  border-color: rgba(255, 196, 84, 0.4);
+  background: rgba(255, 196, 84, 0.08);
+}
+.stage-status.locked {
+  color: var(--text-mute);
+  opacity: 0.85;
+}
+.stage-decision {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.6rem;
+  align-items: baseline;
+  font-size: 0.72rem;
+}
+.stage-decision .k {
+  color: var(--text-mute);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.stage-decision .v { color: var(--text-dim); }
+.stage-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.72rem;
+  margin-top: 0.15rem;
+}
+.stage-progress-meta .mono {
+  color: var(--accent);
+  font-size: 0.72rem;
+}
+.stage-metrics { margin-top: 0.15rem; }
+
+.flash-box.flash-locked .danger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.flash-box.flash-armed .danger:not(:disabled) {
+  box-shadow: 0 0 0 1px rgba(255, 107, 107, 0.35);
+}
+.flash-copy { margin: 0; font-size: 0.72rem; line-height: 1.4; }
+.flash-box .stage-title-row h3 { margin: 0; font-size: 0.95rem; }
+
 .flash-box {
   display: flex;
   flex-direction: column;
@@ -740,3 +840,33 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .shard-sample { padding: 0.35rem 0.45rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-1); }
 .shard-sample-id { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; }
 .shard-sample-id .tag { font-family: var(--font); font-size: 0.65rem; padding: 0.05rem 0.35rem; border-radius: 999px; border: 1px solid var(--border-hi); color: var(--text-dim); }
+
+.license-banner {
+  margin: 0.45rem 0 0.55rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  border: 1px solid var(--border);
+}
+.license-banner.hold {
+  color: var(--warn);
+  border-color: #8a7020;
+  background: rgba(240, 180, 41, 0.08);
+}
+.license-banner.ok {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: rgba(92, 225, 176, 0.06);
+}
+.tile.fail { border-color: #8a3038; }
+.tile .tile-mark {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--text-mute);
+  margin-top: 0.15rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tile.pass .tile-mark { color: var(--accent-dim); }
+.tile.fail .tile-mark { color: var(--danger); }

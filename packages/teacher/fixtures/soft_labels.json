@@ -1,0 +1,10 @@
+{
+  "label": "fixture",
+  "live": false,
+  "source": "fixture",
+  "teacher": "Cinque/supercombo",
+  "device": "fixture",
+  "batches": 4,
+  "samples_per_batch": 32,
+  "note": "Offline soft labels when no AMD/ROCm/7090 XT — never claim live=true"
+}

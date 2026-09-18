@@ -55,9 +55,9 @@ Opens **http://127.0.0.1:5173**. Then: **Pull mici route** → **Pack shards**.
 | Script | Role |
 |--------|------|
 | `scripts/bootstrap.sh` | Bare machine: system toolchain + venv/pip/npm + launch Expo |
-| `scripts/dev-up` | After python3/node/npm exist: venv + deps + launch. On Fedora, auto-`dnf` installs missing tools instead of only dying |
+| `scripts/dev-up` | After python3/node/npm exist: venv + deps + launch. On Fedora/`dnf` or Arch/SteamOS/`pacman` (keyring init/populate before install), auto-installs missing tools instead of only dying |
 
-Both are POSIX sh, Fedora-first, portable (no apt-only / glibc-only hard-coding). Safe to re-run.
+Both are POSIX sh, Fedora-first + Arch/Steam Deck + macOS, portable (no apt-only / glibc-only hard-coding). Safe to re-run.
 
 ### Manual two-terminal (optional)
 

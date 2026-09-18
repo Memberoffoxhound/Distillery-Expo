@@ -3,6 +3,8 @@
 from .config import IngestConfig, load_ingest_config
 from .discover import (
     connect_status,
+    discover_suggested_dongle_id,
+    enrich_dongle_response,
     discovery_overview,
     dongle_status,
     list_adb_devices,
@@ -26,6 +28,8 @@ __all__ = [
     "list_routes",
     "resolve_source",
     "list_adb_devices",
+    "discover_suggested_dongle_id",
+    "enrich_dongle_response",
     "connect_status",
     "set_connect_jwt",
     "dongle_status",

@@ -13,12 +13,16 @@ from distillery_ingest.discover import (
     clear_dongle_id,
     clear_ssh_config,
     connect_status,
+    discover_suggested_dongle_id,
     discovery_overview,
     ensure_dongle_from_cache,
     ensure_ssh_from_cache,
     list_adb_devices,
+    normalize_discovered_dongle_id,
     parse_adb_devices_output,
     probe_ssh,
+    read_dongle_id_via_adb,
+    read_dongle_id_via_ssh,
     set_connect_jwt,
     set_dongle_id,
     set_ssh_config,
@@ -229,3 +233,112 @@ def test_set_dongle_id_persist_and_status(tmp_path, monkeypatch):
     assert cleared["configured"] is False
     assert cleared.get("dongle_id") in (None, "")
     assert not cache.is_file()
+
+
+
+def test_normalize_discovered_dongle_id():
+    assert normalize_discovered_dongle_id("AABBCCDDEEFF0011") == "aabbccddeeff0011"
+    assert normalize_discovered_dongle_id("3e2de7ed673817c2") == "3e2de7ed673817c2"
+    assert normalize_discovered_dongle_id("UnregisteredDevice") is None
+    assert normalize_discovered_dongle_id("") is None
+    # ADB serial / short hex must not be treated as a dongle id
+    assert normalize_discovered_dongle_id("9A281FFBA0012C") is None
+    assert normalize_discovered_dongle_id("192.168.1.42") is None
+
+
+def test_discover_suggested_dongle_id_from_adb(monkeypatch):
+    monkeypatch.setattr(
+        "distillery_ingest.discover.list_adb_devices",
+        lambda: {
+            "ok": True,
+            "adb_available": True,
+            "error": None,
+            "devices": [
+                {
+                    "id": "9A281FFBA0012C",
+                    "model": "mici",
+                    "device": "mici",
+                    "product": "comma_mici",
+                    "state": "device",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "distillery_ingest.discover.read_dongle_id_via_adb",
+        lambda **kwargs: {
+            "ok": True,
+            "dongle_id": "deadbeefcafebabe",
+            "serial": kwargs.get("serial"),
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "distillery_ingest.discover.read_dongle_id_via_ssh",
+        lambda **kwargs: {"ok": False, "dongle_id": None, "error": "SSH host not configured"},
+    )
+    out = discover_suggested_dongle_id()
+    assert out["suggested_dongle_id"] == "deadbeefcafebabe"
+    assert out["discovered_from"] == "adb"
+    assert out["dongle_discovery_source"] == "adb"
+    assert out["dongle_discovery_serial"] == "9A281FFBA0012C"
+
+
+def test_discover_suggested_dongle_id_falls_back_to_ssh(monkeypatch):
+    monkeypatch.setenv("MICI_SSH_HOST", "192.168.1.50")
+    monkeypatch.setattr(
+        "distillery_ingest.discover.list_adb_devices",
+        lambda: {"ok": True, "adb_available": True, "error": None, "devices": []},
+    )
+    monkeypatch.setattr(
+        "distillery_ingest.discover.read_dongle_id_via_ssh",
+        lambda **kwargs: {"ok": True, "dongle_id": "feedfacefeedface", "error": None},
+    )
+    out = discover_suggested_dongle_id()
+    assert out["suggested_dongle_id"] == "feedfacefeedface"
+    assert out["discovered_from"] == "ssh"
+    assert out["dongle_discovery_source"] == "ssh"
+
+
+def test_discover_suggested_dongle_id_honest_null(monkeypatch):
+    monkeypatch.setattr(
+        "distillery_ingest.discover.list_adb_devices",
+        lambda: {"ok": True, "adb_available": True, "error": None, "devices": []},
+    )
+    monkeypatch.setattr(
+        "distillery_ingest.discover.read_dongle_id_via_ssh",
+        lambda **kwargs: {"ok": False, "dongle_id": None, "error": "SSH host not configured"},
+    )
+    out = discover_suggested_dongle_id()
+    assert out["suggested_dongle_id"] is None
+    assert out["discovered_from"] is None
+    assert out["dongle_discovery_source"] is None
+
+
+def test_discovery_overview_includes_suggested(monkeypatch, tmp_path):
+    monkeypatch.setenv("DISTILLERY_INGEST_FIXTURE", "1")
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+    cache = tmp_path / "dongle_id"
+    monkeypatch.setattr("distillery_ingest.discover._DONGLE_CACHE", cache)
+    monkeypatch.setattr("distillery_ingest.config._DONGLE_CACHE", cache)
+    monkeypatch.setattr(
+        "distillery_ingest.discover.list_adb_devices",
+        lambda: {"ok": True, "adb_available": True, "error": None, "devices": []},
+    )
+    monkeypatch.setattr(
+        "distillery_ingest.discover.discover_suggested_dongle_id",
+        lambda **kwargs: {
+            "suggested_dongle_id": "aabbccddeeff0011",
+            "discovered_from": "ssh",
+            "dongle_discovery_source": "ssh",
+            "dongle_discovery_serial": None,
+            "dongle_discovery_error": None,
+        },
+    )
+    snap = discovery_overview()
+    assert snap["suggested_dongle_id"] == "aabbccddeeff0011"
+    assert snap["discovered_from"] == "ssh"
+    assert snap["dongle_discovery_source"] == "ssh"
+    # Auto-hydrate persists the discovered id (not a demo default)
+    assert snap.get("dongle_id") == "aabbccddeeff0011"
+    assert snap.get("auto_hydrated") is True

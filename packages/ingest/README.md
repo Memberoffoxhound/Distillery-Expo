@@ -12,7 +12,7 @@
 
 Fixture routes are **truthful-shaped** (Connect-like `route_id`, segments, per-cam hevc metadata) and labeled `meta.fixture` / `meta.label=fixture` with `placeholder=true` on samples.
 
-Dongle: empty until `POST /dongle` / `DISTILLERY_DONGLE_ID` / `.cache/dongle_id`. Fixture sample may use labeled id `3e2de7ed673817c2`.
+Dongle: empty until `POST /dongle` / `DISTILLERY_DONGLE_ID` / `.cache/dongle_id`, or auto-hydrate when ADB/SSH reads `/data/params/d/DongleId` (never overwrites a saved id; never invents a demo id). Fixture sample may use labeled id `3e2de7ed673817c2`.
 
 ## Event contract
 

@@ -981,7 +981,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .tile.pass .tile-mark { color: var(--accent-dim); }
 .tile.fail .tile-mark { color: var(--danger); }
 
-/* Teacher identity — comma master · model / fixture */
+/* Teacher identity — comma master · big_driving_supercombo / fixture */
 .teacher-identity {
   display: flex;
   align-items: center;

@@ -6,13 +6,37 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+def _ready_cpu_probe(*, force_fixture: bool = False):
+    """CI-safe probe: CPU counts as ready (not 7090-locked)."""
+    return {
+        "device_found": True,
+        "device_ready": True,
+        "device_kind": "cpu",
+        "device_name": "CPU",
+        "tinygrad": "ok",
+        "live": False,
+        "source": "tinygrad",
+        "data_source": "fixture" if force_fixture else "live",
+        "detail": "tinygrad Device.DEFAULT=CPU kind=cpu",
+    }
+
+
 @pytest.fixture()
 def client(monkeypatch):
     monkeypatch.setenv("DISTILLERY_INGEST_FIXTURE", "1")
     monkeypatch.setenv("DISTILLERY_ALLOW_TOY_TRAIN", "1")
     monkeypatch.delenv("COMMA_JWT", raising=False)
     monkeypatch.delenv("CONNECT_JWT", raising=False)
+    # allow_toy+/ready tests expect ok without requiring a live GPU or tinygrad
+    monkeypatch.setattr(
+        "distillery_student.readiness.probe_train_device", _ready_cpu_probe
+    )
+    monkeypatch.setattr(
+        "distillery_student.device.probe_train_device", _ready_cpu_probe
+    )
     from api.main import app
+
+    monkeypatch.setattr("api.main.probe_train_device", _ready_cpu_probe)
 
     with TestClient(app) as c:
         yield c

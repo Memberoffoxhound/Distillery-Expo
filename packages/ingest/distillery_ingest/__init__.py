@@ -5,7 +5,10 @@ from .discover import (
     connect_status,
     discovery_overview,
     list_adb_devices,
+    probe_ssh,
     set_connect_jwt,
+    set_ssh_config,
+    ssh_status,
 )
 from .models import CamSample, RouteInfo, SegmentInfo
 from .pipeline import run_ingest_pipeline
@@ -23,5 +26,8 @@ __all__ = [
     "list_adb_devices",
     "connect_status",
     "set_connect_jwt",
+    "ssh_status",
+    "set_ssh_config",
+    "probe_ssh",
     "discovery_overview",
 ]

@@ -133,6 +133,11 @@ export interface DiscoverOverview {
     available?: boolean;
     host?: string | null;
     user?: string | null;
+    port?: number | null;
+    identity_path?: string | null;
+    key_set?: boolean;
+    cache_path?: string | null;
+    source?: string | null;
     [key: string]: unknown;
   };
   fixture?: {
@@ -291,6 +296,46 @@ export function postDiscoverConnect(jwt: string, persist = true): Promise<Discov
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jwt, persist }),
   });
+}
+
+/** Alias matching Connect JWT naming in Expo panes. */
+export const saveConnectJwt = postDiscoverConnect;
+
+export type DiscoverSshStatus = NonNullable<DiscoverOverview["ssh"]> & {
+  probe?: { ok: boolean; error?: string | null };
+  persisted?: boolean;
+};
+
+export type SshConfigPayload = {
+  host: string;
+  user?: string;
+  port?: number;
+  identity_path?: string | null;
+  persist?: boolean;
+  test?: boolean;
+};
+
+export function fetchDiscoverSsh(): Promise<DiscoverSshStatus> {
+  return jsonFetch("/discover/ssh");
+}
+
+export function saveDiscoverSsh(payload: SshConfigPayload): Promise<DiscoverSshStatus> {
+  return jsonFetch("/discover/ssh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      host: payload.host,
+      user: payload.user ?? "comma",
+      port: payload.port ?? 22,
+      identity_path: payload.identity_path ?? null,
+      persist: payload.persist ?? true,
+      test: payload.test ?? false,
+    }),
+  });
+}
+
+export function testDiscoverSsh(): Promise<{ ok: boolean; error?: string | null }> {
+  return jsonFetch("/discover/ssh/test", { method: "POST" });
 }
 
 export function fetchReady(opts?: {

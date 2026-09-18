@@ -154,3 +154,62 @@ def test_routes_accepts_device_query(client):
     assert data["source"] == "fixture"
     assert data["device"] == "192.168.1.9:5555"
     assert data["ssh_host"] == "192.168.1.9"
+
+
+def test_discover_ssh_get_and_post(client, tmp_path, monkeypatch):
+    cache = tmp_path / "ssh_config.json"
+    monkeypatch.setattr("distillery_ingest.discover._SSH_CACHE", cache)
+    for key in (
+        "MICI_SSH_HOST",
+        "COMMA_SSH_HOST",
+        "MICI_SSH_USER",
+        "COMMA_SSH_USER",
+        "MICI_SSH_PORT",
+        "COMMA_SSH_PORT",
+        "MICI_SSH_KEY",
+        "COMMA_SSH_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    g = client.get("/discover/ssh")
+    assert g.status_code == 200
+    assert "configured" in g.json()
+    assert "port" in g.json()
+
+    p = client.post(
+        "/discover/ssh",
+        json={
+            "host": "192.168.1.77",
+            "user": "comma",
+            "port": 22,
+            "identity_path": "/home/user/.ssh/id_ed25519",
+            "persist": True,
+        },
+    )
+    assert p.status_code == 200
+    body = p.json()
+    assert body["configured"] is True
+    assert body["host"] == "192.168.1.77"
+    assert body["user"] == "comma"
+    assert body["port"] == 22
+    assert body["identity_path"] == "/home/user/.ssh/id_ed25519"
+    assert body["key_set"] is True
+    assert cache.is_file()
+    # no key material beyond path
+    assert "private_key" not in body
+    assert "-----" not in str(body)
+
+
+def test_discover_ssh_test_unconfigured(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "distillery_ingest.discover._SSH_CACHE",
+        tmp_path / "missing_ssh.json",
+    )
+    for key in ("MICI_SSH_HOST", "COMMA_SSH_HOST"):
+        monkeypatch.delenv(key, raising=False)
+    # clear via set empty is invalid; just probe
+    r = client.post("/discover/ssh/test")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body.get("error")

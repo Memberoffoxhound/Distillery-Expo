@@ -34,7 +34,16 @@ class SshRouteSource(RouteSource):
         if not host:
             raise RuntimeError("MICI_SSH_HOST not set")
         target = f"{self.cfg.ssh_user}@{host}"
-        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
+        port = getattr(self.cfg, "ssh_port", 22) or 22
+        cmd = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=8",
+            "-p",
+            str(port),
+        ]
         if self.cfg.ssh_key_path:
             cmd.extend(["-i", self.cfg.ssh_key_path])
         cmd.extend([target, remote_cmd])

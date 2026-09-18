@@ -7,6 +7,8 @@ import {
   fetchRoutes,
   formatRouteLength,
   postDiscoverConnect,
+  saveDiscoverSsh,
+  testDiscoverSsh,
   type DiscoverDevice,
   type DiscoverOverview,
   type DongleInfo,
@@ -111,7 +113,7 @@ function connectionState(
         label: "Offline",
         tone: "offline",
         detail:
-          "No ADB or SSH path yet — install adb / set MICI_SSH_HOST, or use fixture.",
+          "No ADB or SSH path yet — install adb / configure SSH below, or use fixture.",
       };
     }
     return {
@@ -182,6 +184,11 @@ export function IngestPane({
   const [pickedDevice, setPickedDevice] = useState<string | null>(null);
   const [discover, setDiscover] = useState<DiscoverOverview | null>(null);
   const [jwtDraft, setJwtDraft] = useState("");
+  const [sshHost, setSshHost] = useState("");
+  const [sshUser, setSshUser] = useState("comma");
+  const [sshPort, setSshPort] = useState("22");
+  const [sshIdentity, setSshIdentity] = useState("");
+  const [sshProbeNote, setSshProbeNote] = useState<string | null>(null);
 
   const load = useCallback(async (source: RouteSource, nextMode?: DiscoverMode, deviceId?: string | null) => {
     setLoading(true);
@@ -234,6 +241,19 @@ export function IngestPane({
         if (prev && r.routes.some((x) => x.route_id === prev)) return prev;
         return r.routes[0]?.route_id ?? null;
       });
+
+      // Hydrate SSH form from status; prefill host from ADB tcp suggested_host when empty
+      if (ssh?.host) {
+        setSshHost((prev) => prev || String(ssh.host));
+        if (ssh.user) setSshUser(String(ssh.user));
+        if (ssh.port != null) setSshPort(String(ssh.port));
+        if (ssh.identity_path) setSshIdentity(String(ssh.identity_path));
+      } else {
+        const suggested = adbDevices.find((d) => d.suggested_host)?.suggested_host;
+        if (suggested) {
+          setSshHost((prev) => (prev.trim() ? prev : String(suggested)));
+        }
+      }
 
       if (nextMode === "lan" || source === "ssh" || source === "auto") {
         if (adbDevices.length > 0) {
@@ -298,8 +318,70 @@ export function IngestPane({
     }
   };
 
+  const saveSsh = async () => {
+    const host = sshHost.trim();
+    if (!host) return;
+    setLoading(true);
+    setSshProbeNote(null);
+    try {
+      const portNum = Number.parseInt(sshPort.trim() || "22", 10);
+      await saveDiscoverSsh({
+        host,
+        user: sshUser.trim() || "comma",
+        port: Number.isFinite(portNum) && portNum > 0 ? portNum : 22,
+        identity_path: sshIdentity.trim() || null,
+        persist: true,
+      });
+      await load("ssh", "lan", pickedDevice);
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : "SSH config failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const testSsh = async () => {
+    setSshProbeNote(null);
+    setLoading(true);
+    try {
+      // Persist first if host filled so probe uses current form values
+      const host = sshHost.trim();
+      if (host) {
+        const portNum = Number.parseInt(sshPort.trim() || "22", 10);
+        await saveDiscoverSsh({
+          host,
+          user: sshUser.trim() || "comma",
+          port: Number.isFinite(portNum) && portNum > 0 ? portNum : 22,
+          identity_path: sshIdentity.trim() || null,
+          persist: true,
+        });
+      }
+      const probe = await testDiscoverSsh();
+      if (probe.ok) {
+        setSshProbeNote("SSH probe ok");
+      } else {
+        setSshProbeNote(probe.error || "SSH probe failed");
+      }
+      await load(prefer === "fixture" ? "ssh" : prefer, mode === "idle" ? "lan" : mode, pickedDevice);
+    } catch (e) {
+      setSshProbeNote(e instanceof Error ? e.message : "SSH probe failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const pickDevice = (id: string) => {
     setPickedDevice(id);
+    const fromDongle = (dongle?.devices ?? []).find((d) => String(d.id ?? "") === id) as
+      | DiscoverDevice
+      | undefined;
+    const fromDiscover = (discover?.devices?.devices ?? []).find(
+      (d) => String(d.id ?? "") === id
+    );
+    const suggested = fromDongle?.suggested_host ?? fromDiscover?.suggested_host;
+    if (suggested) {
+      setSshHost((prev) => (prev.trim() ? prev : String(suggested)));
+    }
     void load(prefer === "fixture" ? "ssh" : prefer, "lan", id);
   };
 
@@ -316,6 +398,7 @@ export function IngestPane({
 
   const discoveredDevices = dongle?.devices ?? [];
   const connectConfigured = Boolean(discover?.connect?.configured);
+  const sshConfigured = Boolean(discover?.ssh?.configured || discover?.ssh?.host);
 
   return (
     <div className="ingest-pane">
@@ -345,7 +428,11 @@ export function IngestPane({
               </span>
               <span
                 className={dongle.ssh_available ? "ok" : "off"}
-                title={dongle.ssh_available ? "SSH available" : "SSH not configured"}
+                title={
+                  dongle.ssh_available || Boolean(discover?.ssh?.configured)
+                    ? "SSH ready"
+                    : "SSH not configured"
+                }
               >
                 SSH
               </span>
@@ -422,6 +509,64 @@ export function IngestPane({
           >
             Save JWT
           </button>
+        </div>
+      )}
+
+      {(mode === "lan" || (!sshConfigured && mode !== "fixture")) && (
+        <div className="ingest-ssh-row" aria-label="SSH configuration">
+          <div className="ingest-ssh-grid">
+            <input
+              type="text"
+              placeholder="SSH host (mici LAN IP)"
+              value={sshHost}
+              onChange={(e) => setSshHost(e.target.value)}
+              disabled={loading}
+              aria-label="SSH host"
+            />
+            <input
+              type="text"
+              placeholder="user"
+              value={sshUser}
+              onChange={(e) => setSshUser(e.target.value)}
+              disabled={loading}
+              aria-label="SSH user"
+            />
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="port"
+              value={sshPort}
+              onChange={(e) => setSshPort(e.target.value)}
+              disabled={loading}
+              aria-label="SSH port"
+              className="ingest-ssh-port"
+            />
+            <input
+              type="text"
+              placeholder="identity path (optional)"
+              value={sshIdentity}
+              onChange={(e) => setSshIdentity(e.target.value)}
+              disabled={loading}
+              aria-label="SSH identity path"
+            />
+          </div>
+          <div className="ingest-ssh-actions">
+            <button
+              disabled={loading || !sshHost.trim()}
+              onClick={() => void saveSsh()}
+              title="POST /discover/ssh"
+            >
+              Save SSH
+            </button>
+            <button
+              disabled={loading || !sshHost.trim()}
+              onClick={() => void testSsh()}
+              title="POST /discover/ssh/test"
+            >
+              Test
+            </button>
+          </div>
+          {sshProbeNote && <div className="ingest-note">{sshProbeNote}</div>}
         </div>
       )}
 

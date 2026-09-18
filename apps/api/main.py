@@ -27,7 +27,10 @@ from distillery_ingest.discover import (
     connect_status,
     discovery_overview,
     list_adb_devices,
+    probe_ssh,
     set_connect_jwt,
+    set_ssh_config,
+    ssh_status,
 )
 from distillery_ingest.resolve import list_routes as ingest_list_routes
 from distillery_shards import run_shard_pipeline
@@ -139,6 +142,16 @@ class ConnectJwtRequest(BaseModel):
     """Set comma Connect JWT without shell/env archaeology."""
     jwt: str = Field(..., min_length=1)
     persist: bool = True
+
+
+class SshConfigRequest(BaseModel):
+    """Set mici SSH target without MICI_SSH_HOST scavenger hunt."""
+    host: str = Field(..., min_length=1)
+    user: str = "comma"
+    port: int = 22
+    identity_path: str | None = None
+    persist: bool = True
+    test: bool = False
 
 
 # In-memory job store
@@ -880,6 +893,36 @@ async def discover_connect_set(body: ConnectJwtRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+
+@app.get("/discover/ssh")
+async def discover_ssh_get() -> dict[str, Any]:
+    """SSH status (host/user/port/identity path) — no key bytes, no shell docs."""
+    return ssh_status()
+
+
+@app.post("/discover/ssh")
+async def discover_ssh_set(body: SshConfigRequest) -> dict[str, Any]:
+    """Set SSH host/user/port (+ optional identity path) → env + .cache/ssh_config.json."""
+    try:
+        status = set_ssh_config(
+            body.host,
+            user=body.user or "comma",
+            port=body.port if body.port is not None else 22,
+            identity_path=body.identity_path,
+            persist=body.persist,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if body.test:
+        probe = probe_ssh(timeout=5.0)
+        return {**status, "probe": probe}
+    return status
+
+
+@app.post("/discover/ssh/test")
+async def discover_ssh_test() -> dict[str, Any]:
+    """Short non-interactive SSH probe; honest fail (~5s timeout)."""
+    return probe_ssh(timeout=5.0)
 
 
 

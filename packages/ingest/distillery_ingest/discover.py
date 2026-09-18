@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -16,6 +17,8 @@ log = logging.getLogger(__name__)
 
 # Non-secret path under .cache/ (gitignored). JWT content must never be committed.
 _JWT_CACHE = _REPO_ROOT / ".cache" / "connect_jwt"
+# SSH host/user/port/identity path (path only — not key bytes). Gitignored via .cache/.
+_SSH_CACHE = _REPO_ROOT / ".cache" / "ssh_config.json"
 
 
 @dataclass
@@ -135,15 +138,199 @@ def _jwt_source() -> str | None:
     return None
 
 
+def ensure_ssh_from_cache() -> dict[str, Any] | None:
+    """If MICI_SSH_HOST unset, load from .cache/ssh_config.json into process env."""
+    if os.environ.get("MICI_SSH_HOST") or os.environ.get("COMMA_SSH_HOST"):
+        return None
+    if not _SSH_CACHE.is_file():
+        return None
+    try:
+        data = json.loads(_SSH_CACHE.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        log.warning("failed reading SSH cache: %s", exc)
+        return None
+    if not isinstance(data, dict):
+        return None
+    host = str(data.get("host") or "").strip()
+    if not host:
+        return None
+    os.environ["MICI_SSH_HOST"] = host
+    user = str(data.get("user") or "comma").strip() or "comma"
+    os.environ.setdefault("MICI_SSH_USER", user)
+    try:
+        port = int(data.get("port") if data.get("port") is not None else 22)
+    except (TypeError, ValueError):
+        port = 22
+    os.environ.setdefault("MICI_SSH_PORT", str(port))
+    identity = str(data.get("identity_path") or "").strip() or None
+    if identity and not (os.environ.get("MICI_SSH_KEY") or os.environ.get("COMMA_SSH_KEY")):
+        os.environ["MICI_SSH_KEY"] = identity
+    return data
+
+
+def set_ssh_config(
+    host: str,
+    user: str = "comma",
+    port: int = 22,
+    identity_path: str | None = None,
+    *,
+    persist: bool = True,
+) -> dict[str, Any]:
+    """Store SSH target in process env (+ optional .cache JSON). Path only — no key bytes."""
+    h = (host or "").strip()
+    if not h:
+        raise ValueError("host must be a non-empty string")
+    u = (user or "comma").strip() or "comma"
+    try:
+        p = int(port) if port is not None else 22
+    except (TypeError, ValueError) as exc:
+        raise ValueError("port must be an integer") from exc
+    if p < 1 or p > 65535:
+        raise ValueError("port must be between 1 and 65535")
+    ident = (identity_path or "").strip() or None
+
+    os.environ["MICI_SSH_HOST"] = h
+    os.environ["COMMA_SSH_HOST"] = h
+    os.environ["MICI_SSH_USER"] = u
+    os.environ["COMMA_SSH_USER"] = u
+    os.environ["MICI_SSH_PORT"] = str(p)
+    os.environ["COMMA_SSH_PORT"] = str(p)
+    if ident:
+        os.environ["MICI_SSH_KEY"] = ident
+        os.environ["COMMA_SSH_KEY"] = ident
+    else:
+        os.environ.pop("MICI_SSH_KEY", None)
+        os.environ.pop("COMMA_SSH_KEY", None)
+
+    cached = False
+    if persist:
+        payload = {
+            "host": h,
+            "user": u,
+            "port": p,
+            "identity_path": ident,
+        }
+        try:
+            _SSH_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            _SSH_CACHE.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            try:
+                _SSH_CACHE.chmod(0o600)
+            except OSError:
+                pass
+            cached = True
+        except OSError as exc:
+            log.warning("failed writing SSH cache: %s", exc)
+    status = ssh_status()
+    status["persisted"] = cached
+    return status
+
+
+def clear_ssh_config(*, clear_cache: bool = True) -> dict[str, Any]:
+    for key in (
+        "MICI_SSH_HOST",
+        "COMMA_SSH_HOST",
+        "MICI_SSH_USER",
+        "COMMA_SSH_USER",
+        "MICI_SSH_PORT",
+        "COMMA_SSH_PORT",
+        "MICI_SSH_KEY",
+        "COMMA_SSH_KEY",
+    ):
+        os.environ.pop(key, None)
+    if clear_cache and _SSH_CACHE.is_file():
+        try:
+            _SSH_CACHE.unlink()
+        except OSError as exc:
+            log.warning("failed removing SSH cache: %s", exc)
+    return ssh_status()
+
+
+def probe_ssh(*, timeout: float = 5.0) -> dict[str, Any]:
+    """Short non-interactive SSH check. Honest fail; never hang forever."""
+    ensure_ssh_from_cache()
+    cfg = load_ingest_config()
+    host = cfg.ssh_host
+    if not host:
+        return {"ok": False, "error": "SSH host not configured"}
+    user = cfg.ssh_user or "comma"
+    port = getattr(cfg, "ssh_port", 22) or 22
+    target = f"{user}@{host}"
+    cmd = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ConnectTimeout={max(1, int(timeout))}",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-p",
+        str(port),
+    ]
+    if cfg.ssh_key_path:
+        cmd.extend(["-i", cfg.ssh_key_path])
+    cmd.extend([target, "true"])
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout + 1.0,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {"ok": False, "error": "ssh not found on PATH"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"ssh probe timed out after {timeout:.0f}s"}
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}
+    if proc.returncode == 0:
+        return {"ok": True, "error": None}
+    err = (proc.stderr or proc.stdout or f"ssh exit {proc.returncode}").strip()
+    # Keep error short for UI
+    if len(err) > 240:
+        err = err[:237] + "…"
+    return {"ok": False, "error": err or f"ssh exit {proc.returncode}"}
+
+
 def ssh_status(cfg: IngestConfig | None = None) -> dict[str, Any]:
+    """Status for GET /discover/ssh — host/user/port; identity is a path (OK)."""
+    ensure_ssh_from_cache()
     cfg = cfg or load_ingest_config()
+    cache_path = None
+    if _SSH_CACHE.is_file():
+        try:
+            cache_path = str(_SSH_CACHE.relative_to(_REPO_ROOT))
+        except ValueError:
+            cache_path = str(_SSH_CACHE)
+    port = getattr(cfg, "ssh_port", 22) or 22
     return {
         "configured": bool(cfg.ssh_host),
         "available": cfg.ssh_available,
         "host": cfg.ssh_host,
         "user": cfg.ssh_user,
+        "port": port,
+        "identity_path": cfg.ssh_key_path,
         "key_set": bool(cfg.ssh_key_path),
+        "cache_path": cache_path,
+        "source": _ssh_source(),
     }
+
+
+def _ssh_source() -> str | None:
+    if os.environ.get("MICI_SSH_HOST") or os.environ.get("COMMA_SSH_HOST"):
+        if _SSH_CACHE.is_file():
+            try:
+                data = json.loads(_SSH_CACHE.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and data.get("host"):
+                    env_host = os.environ.get("MICI_SSH_HOST") or os.environ.get("COMMA_SSH_HOST")
+                    if str(data.get("host")).strip() == (env_host or "").strip():
+                        return "env+cache"
+            except (OSError, ValueError, TypeError):
+                pass
+        return "env"
+    if _SSH_CACHE.is_file():
+        return "cache"
+    return None
 
 
 _KV_RE = re.compile(r"(\w+):(\S+)")
@@ -243,6 +430,7 @@ def _which(name: str) -> str | None:
 def discovery_overview(cfg: IngestConfig | None = None) -> dict[str, Any]:
     """Combined discovery snapshot for Expo (devices + connect + ssh + fixture)."""
     ensure_jwt_from_cache()
+    ensure_ssh_from_cache()
     cfg = cfg or load_ingest_config()
     adb = list_adb_devices()
     return {
@@ -293,6 +481,7 @@ def apply_discovered_overrides(
         connect_base_url=cfg.connect_base_url,
         ssh_host=host,
         ssh_user=cfg.ssh_user,
+        ssh_port=getattr(cfg, "ssh_port", 22) or 22,
         ssh_key_path=cfg.ssh_key_path,
         force_fixture=cfg.force_fixture,
         repo_root=cfg.repo_root,

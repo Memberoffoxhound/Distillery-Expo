@@ -25,6 +25,7 @@ class IngestConfig:
     connect_base_url: str = "https://api.commadotai.com"
     ssh_host: str | None = None
     ssh_user: str = "comma"
+    ssh_port: int = 22
     ssh_key_path: str | None = None
     force_fixture: bool = False
     repo_root: Path = field(default_factory=lambda: _REPO_ROOT)
@@ -75,6 +76,41 @@ def load_ingest_config(config_path: Path | str | None = None) -> IngestConfig:
     ssh_host = os.environ.get("MICI_SSH_HOST") or os.environ.get("COMMA_SSH_HOST") or None
     ssh_user = os.environ.get("MICI_SSH_USER") or os.environ.get("COMMA_SSH_USER") or "comma"
     ssh_key = os.environ.get("MICI_SSH_KEY") or os.environ.get("COMMA_SSH_KEY") or None
+    ssh_port_raw = os.environ.get("MICI_SSH_PORT") or os.environ.get("COMMA_SSH_PORT") or "22"
+    try:
+        ssh_port = int(str(ssh_port_raw).strip() or "22")
+    except ValueError:
+        ssh_port = 22
+    # Prefer env; else hydrate from .cache/ssh_config.json (set via POST /discover/ssh)
+    if not ssh_host:
+        ssh_cache = _REPO_ROOT / ".cache" / "ssh_config.json"
+        if ssh_cache.is_file():
+            try:
+                cached_ssh = json.loads(ssh_cache.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                cached_ssh = {}
+            if isinstance(cached_ssh, dict) and cached_ssh.get("host"):
+                ssh_host = str(cached_ssh["host"]).strip() or None
+                if ssh_host:
+                    os.environ.setdefault("MICI_SSH_HOST", ssh_host)
+                if cached_ssh.get("user") and not (
+                    os.environ.get("MICI_SSH_USER") or os.environ.get("COMMA_SSH_USER")
+                ):
+                    ssh_user = str(cached_ssh["user"]).strip() or "comma"
+                    os.environ.setdefault("MICI_SSH_USER", ssh_user)
+                if cached_ssh.get("port") is not None and not (
+                    os.environ.get("MICI_SSH_PORT") or os.environ.get("COMMA_SSH_PORT")
+                ):
+                    try:
+                        ssh_port = int(cached_ssh["port"])
+                    except (TypeError, ValueError):
+                        pass
+                    else:
+                        os.environ.setdefault("MICI_SSH_PORT", str(ssh_port))
+                if cached_ssh.get("identity_path") and not ssh_key:
+                    ssh_key = str(cached_ssh["identity_path"]).strip() or None
+                    if ssh_key:
+                        os.environ.setdefault("MICI_SSH_KEY", ssh_key)
     force = os.environ.get("DISTILLERY_INGEST_FIXTURE", "").lower() in ("1", "true", "yes")
     base = os.environ.get("CONNECT_BASE_URL") or "https://api.commadotai.com"
 
@@ -89,6 +125,7 @@ def load_ingest_config(config_path: Path | str | None = None) -> IngestConfig:
         connect_base_url=base.rstrip("/"),
         ssh_host=ssh_host,
         ssh_user=ssh_user,
+        ssh_port=ssh_port,
         ssh_key_path=ssh_key,
         force_fixture=force,
         repo_root=_REPO_ROOT,

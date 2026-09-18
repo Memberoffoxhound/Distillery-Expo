@@ -1130,3 +1130,44 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .device-pick[aria-pressed="true"] {
   outline: 1px solid var(--accent, #6cf);
 }
+
+.ingest-ssh-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.5rem 0 0.75rem;
+}
+.ingest-ssh-grid {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1.6fr) minmax(4rem, 0.7fr) 4.5rem minmax(8rem, 1.4fr);
+  gap: 0.4rem;
+  align-items: center;
+}
+@media (max-width: 720px) {
+  .ingest-ssh-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .ingest-ssh-grid input:first-child,
+  .ingest-ssh-grid input:last-child {
+    grid-column: 1 / -1;
+  }
+}
+.ingest-ssh-row input {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border, #333);
+  background: var(--panel, #12141a);
+  color: inherit;
+  min-width: 0;
+}
+.ingest-ssh-port {
+  max-width: 5rem;
+}
+.ingest-ssh-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}

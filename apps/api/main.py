@@ -25,6 +25,7 @@ from distillery_ingest import load_ingest_config, run_ingest_pipeline
 from distillery_ingest.discover import (
     apply_discovered_overrides,
     connect_status,
+    enrich_dongle_response,
     discovery_overview,
     dongle_status,
     list_adb_devices,
@@ -1164,8 +1165,10 @@ async def list_stages() -> dict[str, list[str]]:
 async def get_dongle() -> dict[str, Any]:
     """Dongle + Connect/SSH posture, plus ADB readiness for Expo status chips.
 
-    dongle_id is null/empty until POST /dongle (or DISTILLERY_DONGLE_ID / .cache).
-    Never returns a hardcoded demo dongle as the default.
+    dongle_id is null/empty until POST /dongle (or DISTILLERY_DONGLE_ID / .cache)
+    or auto-hydrate from ADB/SSH DongleId. Never returns a hardcoded demo default.
+    When ADB/SSH can read /data/params/d/DongleId, includes suggested_dongle_id
+    and discovered_from (adb|ssh|null).
     """
     status = dongle_status()
     adb = list_adb_devices()
@@ -1177,12 +1180,15 @@ async def get_dongle() -> dict[str, Any]:
         adb_status = "error"
     else:
         adb_status = "ready"
+    enriched = enrich_dongle_response(status, adb=adb, auto_hydrate=True)
     return {
-        **status,
+        **enriched,
         "adb_available": adb_available,
         "adb_status": adb_status,
         "adb_device_count": len(devices),
     }
+
+
 
 
 @app.post("/dongle")
@@ -1201,12 +1207,16 @@ async def post_dongle(body: DongleIdRequest) -> dict[str, Any]:
         adb_status = "error"
     else:
         adb_status = "ready"
+    # Manual Save already configured — never auto-overwrite; still expose suggestions.
+    enriched = enrich_dongle_response(status, adb=adb, auto_hydrate=False)
     return {
-        **status,
+        **enriched,
         "adb_available": adb_available,
         "adb_status": adb_status,
         "adb_device_count": len(devices),
     }
+
+
 
 
 @app.get("/discover")

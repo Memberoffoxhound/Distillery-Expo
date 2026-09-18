@@ -519,6 +519,283 @@ def _which(name: str) -> str | None:
     return which(name)
 
 
+
+# Canonical mici param path (openpilot Params "DongleId").
+_DONGLE_PARAM_PATH = "/data/params/d/DongleId"
+_UNREGISTERED_DONGLE_IDS = frozenset({"", "unregistereddevice", "UnregisteredDevice"})
+# Real comma dongle ids are 16+ hex; never invent from ADB serial / hostname alone.
+_HEX_DONGLE_RE = re.compile(r"^[0-9a-fA-F]{16,}$")
+
+
+def normalize_discovered_dongle_id(raw: str | None) -> str | None:
+    """Return a real-looking dongle id, or None. Never invent / never demo default."""
+    value = (raw or "").strip()
+    if not value:
+        return None
+    if value in _UNREGISTERED_DONGLE_IDS or value.lower() == "unregistereddevice":
+        return None
+    if not _HEX_DONGLE_RE.match(value):
+        return None
+    return value.lower()
+
+
+def _is_mici_like_device(dev: dict[str, Any]) -> bool:
+    model = str(dev.get("model") or "").lower()
+    device = str(dev.get("device") or "").lower()
+    product = str(dev.get("product") or "").lower()
+    blob = f"{model} {device} {product}"
+    if any(x in blob for x in ("sdk_gphone", "emulator", "generic")):
+        return False
+    return "mici" in blob or "comma" in blob
+
+
+def read_dongle_id_via_adb(
+    *,
+    serial: str | None = None,
+    adb_bin: str = "adb",
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    """Read DongleId from a live ADB device (`cat /data/params/d/DongleId`)."""
+    adb_path = _which(adb_bin)
+    if not adb_path:
+        return {
+            "ok": False,
+            "dongle_id": None,
+            "serial": serial,
+            "error": "adb not found on PATH",
+        }
+    cmd = [adb_path]
+    if serial:
+        cmd.extend(["-s", serial])
+    cmd.extend(["shell", f"cat {_DONGLE_PARAM_PATH} 2>/dev/null"])
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "dongle_id": None, "serial": serial, "error": str(exc)}
+    raw = (proc.stdout or "").strip().replace("\r", "").strip()
+    dongle = normalize_discovered_dongle_id(raw)
+    if proc.returncode != 0 and not dongle:
+        err = (proc.stderr or proc.stdout or f"adb exit {proc.returncode}").strip()
+        if len(err) > 200:
+            err = err[:197] + "…"
+        return {"ok": False, "dongle_id": None, "serial": serial, "error": err or "empty"}
+    if not dongle:
+        return {
+            "ok": False,
+            "dongle_id": None,
+            "serial": serial,
+            "error": "DongleId missing or unregistered on device",
+        }
+    return {"ok": True, "dongle_id": dongle, "serial": serial, "error": None}
+
+
+def read_dongle_id_via_ssh(*, timeout: float = 5.0) -> dict[str, Any]:
+    """Read DongleId over configured SSH (`cat /data/params/d/DongleId`)."""
+    ensure_ssh_from_cache()
+    cfg = load_ingest_config()
+    host = cfg.ssh_host
+    if not host:
+        return {"ok": False, "dongle_id": None, "error": "SSH host not configured"}
+    user = cfg.ssh_user or "comma"
+    port = getattr(cfg, "ssh_port", 22) or 22
+    target = f"{user}@{host}"
+    cmd = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ConnectTimeout={max(1, int(timeout))}",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-p",
+        str(port),
+    ]
+    if cfg.ssh_key_path:
+        cmd.extend(["-i", cfg.ssh_key_path])
+    cmd.extend([target, f"cat {_DONGLE_PARAM_PATH} 2>/dev/null"])
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout + 1.0,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {"ok": False, "dongle_id": None, "error": "ssh not found on PATH"}
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "dongle_id": None, "error": str(exc)}
+    raw = (proc.stdout or "").strip().replace("\r", "").strip()
+    dongle = normalize_discovered_dongle_id(raw)
+    if proc.returncode != 0 and not dongle:
+        err = (proc.stderr or proc.stdout or f"ssh exit {proc.returncode}").strip()
+        if len(err) > 200:
+            err = err[:197] + "…"
+        return {"ok": False, "dongle_id": None, "error": err or "empty"}
+    if not dongle:
+        return {
+            "ok": False,
+            "dongle_id": None,
+            "error": "DongleId missing or unregistered on device",
+        }
+    return {"ok": True, "dongle_id": dongle, "error": None}
+
+
+def _adb_device_priority(dev: dict[str, Any]) -> tuple[int, int, str]:
+    """Prefer online mici devices for DongleId probe."""
+    state = str(dev.get("state") or "").lower()
+    online = 0 if state == "device" else 1
+    mici = 0 if _is_mici_like_device(dev) else 1
+    return (online, mici, str(dev.get("id") or ""))
+
+
+def _suggestion_payload(
+    *,
+    suggested_dongle_id: str | None,
+    discovered_from: str | None,
+    discovery_serial: str | None = None,
+    discovery_error: str | None = None,
+) -> dict[str, Any]:
+    """Shared shape for GET /dongle and GET /discover (Bruce + Jony contract)."""
+    return {
+        "suggested_dongle_id": suggested_dongle_id,
+        "discovered_from": discovered_from,
+        # Aliases kept for earlier draft keys / UI tolerance
+        "dongle_discovery_source": discovered_from,
+        "dongle_discovery_serial": discovery_serial,
+        "dongle_discovery_error": discovery_error,
+    }
+
+
+def discover_suggested_dongle_id(
+    *,
+    prefer_serial: str | None = None,
+    adb: dict[str, Any] | None = None,
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    """Probe ADB (mici) then SSH for a real DongleId. Honest null — no fake / demo id."""
+    adb_payload = adb if adb is not None else list_adb_devices()
+    devices = list(adb_payload.get("devices") or [])
+    prefer = (prefer_serial or "").strip() or None
+
+    candidates: list[dict[str, Any]] = []
+    if prefer:
+        for d in devices:
+            if str(d.get("id") or "") == prefer:
+                candidates.append(d)
+                break
+    mici_devs = [d for d in devices if _is_mici_like_device(d)]
+    mici_devs.sort(key=_adb_device_priority)
+    for d in mici_devs:
+        if prefer and str(d.get("id") or "") == prefer:
+            continue
+        candidates.append(d)
+
+    last_err: str | None = None
+    for d in candidates:
+        serial = str(d.get("id") or "").strip()
+        if not serial:
+            continue
+        state = str(d.get("state") or "").lower()
+        if state in ("offline", "unauthorized", "no permissions"):
+            continue
+        result = read_dongle_id_via_adb(serial=serial, timeout=timeout)
+        if result.get("ok") and result.get("dongle_id"):
+            return _suggestion_payload(
+                suggested_dongle_id=result["dongle_id"],
+                discovered_from="adb",
+                discovery_serial=serial,
+            )
+        last_err = result.get("error") or last_err
+
+    # Only SSH-probe when host is configured (fast no-op otherwise).
+    ensure_ssh_from_cache()
+    cfg = load_ingest_config()
+    if cfg.ssh_host:
+        ssh_result = read_dongle_id_via_ssh(timeout=timeout)
+        if ssh_result.get("ok") and ssh_result.get("dongle_id"):
+            return _suggestion_payload(
+                suggested_dongle_id=ssh_result["dongle_id"],
+                discovered_from="ssh",
+            )
+        if ssh_result.get("error"):
+            last_err = ssh_result.get("error") or last_err
+
+    return _suggestion_payload(
+        suggested_dongle_id=None,
+        discovered_from=None,
+        discovery_error=last_err,
+    )
+
+
+def maybe_auto_hydrate_dongle(
+    suggested: dict[str, Any] | None = None,
+    *,
+    persist: bool = True,
+) -> dict[str, Any]:
+    """If dongle unset and discovery found one, persist via same path as POST /dongle.
+
+    Never overwrites a user-saved / env / cache id. Returns hydration metadata for API.
+    """
+    ensure_dongle_from_cache()
+    existing = (os.environ.get("DISTILLERY_DONGLE_ID") or "").strip()
+    if existing:
+        return {
+            "auto_hydrated": False,
+            "skipped_reason": "already_configured",
+            "dongle_id": existing,
+        }
+    hint = suggested if suggested is not None else discover_suggested_dongle_id()
+    found = (hint.get("suggested_dongle_id") or "").strip() or None
+    if not found:
+        return {
+            "auto_hydrated": False,
+            "skipped_reason": "nothing_discovered",
+            "dongle_id": None,
+        }
+    status = set_dongle_id(found, persist=persist)
+    return {
+        "auto_hydrated": True,
+        "skipped_reason": None,
+        "dongle_id": status.get("dongle_id"),
+        "discovered_from": hint.get("discovered_from"),
+        "persisted": status.get("persisted"),
+    }
+
+
+def enrich_dongle_response(
+    status: dict[str, Any],
+    *,
+    adb: dict[str, Any] | None = None,
+    auto_hydrate: bool = True,
+) -> dict[str, Any]:
+    """Attach suggested_* / discovered_from; optionally auto-hydrate when unset."""
+    adb_payload = adb if adb is not None else list_adb_devices()
+    suggested = discover_suggested_dongle_id(adb=adb_payload)
+    hydrated: dict[str, Any] | None = None
+    if auto_hydrate and not status.get("configured"):
+        hydrated = maybe_auto_hydrate_dongle(suggested)
+        if hydrated.get("auto_hydrated"):
+            # Refresh saved fields after persist
+            status = dongle_status()
+    out = {**status, **suggested}
+    if hydrated is not None:
+        out["auto_hydrated"] = bool(hydrated.get("auto_hydrated"))
+        out["auto_hydrate_skipped_reason"] = hydrated.get("skipped_reason")
+    else:
+        out["auto_hydrated"] = False
+        out["auto_hydrate_skipped_reason"] = (
+            "already_configured" if status.get("configured") else None
+        )
+    return out
+
+
 def discovery_overview(cfg: IngestConfig | None = None) -> dict[str, Any]:
     """Combined discovery snapshot for Expo (devices + connect + ssh + fixture)."""
     ensure_jwt_from_cache()
@@ -526,10 +803,25 @@ def discovery_overview(cfg: IngestConfig | None = None) -> dict[str, Any]:
     ensure_dongle_from_cache()
     cfg = cfg or load_ingest_config()
     adb = list_adb_devices()
-    dongle = dongle_status(cfg)
+    dongle = enrich_dongle_response(dongle_status(cfg), adb=adb, auto_hydrate=True)
+    # Attach discovered id onto matching ADB device row when present
+    serial = dongle.get("dongle_discovery_serial")
+    sug = dongle.get("suggested_dongle_id")
+    if sug and serial and isinstance(adb.get("devices"), list):
+        for row in adb["devices"]:
+            if str(row.get("id") or "") == str(serial):
+                row["dongle_id"] = sug
+                row["discovered_from"] = "adb"
+                break
     return {
         "dongle_id": dongle.get("dongle_id"),
         "dongle": dongle,
+        "suggested_dongle_id": dongle.get("suggested_dongle_id"),
+        "discovered_from": dongle.get("discovered_from"),
+        "dongle_discovery_source": dongle.get("discovered_from"),
+        "dongle_discovery_serial": dongle.get("dongle_discovery_serial"),
+        "dongle_discovery_error": dongle.get("dongle_discovery_error"),
+        "auto_hydrated": dongle.get("auto_hydrated"),
         "cams": list(cfg.cams),
         "devices": adb,
         "connect": connect_status(cfg),
@@ -546,7 +838,6 @@ def discovery_overview(cfg: IngestConfig | None = None) -> dict[str, Any]:
             "fixture": True,
         },
     }
-
 
 def apply_discovered_overrides(
     cfg: IngestConfig,

@@ -1,6 +1,6 @@
 {
-  "for": "Jony (UI) — bind dongle id Save like JWT/SSH",
-  "purpose": "Persist mici dongle id via GUI Save; Connect/SSH lists use saved id only (no demo default)",
+  "for": "Jony (UI) \u2014 bind dongle id Save like JWT/SSH; prefer auto from ADB/SSH",
+  "purpose": "Persist mici dongle id via GUI Save or auto-discover from device; Connect/SSH lists use saved id only (no demo default)",
   "endpoints": {
     "GET /dongle": {
       "response_200": {
@@ -8,15 +8,26 @@
         "configured": "boolean",
         "source": "env | cache | env+cache | null",
         "cache_path": ".cache/dongle_id | null",
-        "cams": ["road", "wide", "driver"],
+        "cams": [
+          "road",
+          "wide",
+          "driver"
+        ],
         "connect_available": "boolean",
         "ssh_available": "boolean",
         "force_fixture": "boolean",
         "adb_available": "boolean",
         "adb_status": "ready | not_on_path | error",
-        "adb_device_count": 0
+        "adb_device_count": 0,
+        "suggested_dongle_id": "16+ hex | null",
+        "discovered_from": "adb | ssh | null",
+        "dongle_discovery_source": "adb | ssh | null",
+        "dongle_discovery_serial": "adb serial | null",
+        "dongle_discovery_error": "string | null",
+        "auto_hydrated": "boolean",
+        "auto_hydrate_skipped_reason": "already_configured | nothing_discovered | null"
       },
-      "notes": "dongle_id is null/empty until Save. Never treat a hardcoded demo id as the default."
+      "notes": "dongle_id is null/empty until Save or auto-hydrate. Never treat a hardcoded demo id as the default. suggested_dongle_id comes only from reading /data/params/d/DongleId via ADB or SSH \u2014 never invent from ADB serial / hostname. If unset and discovery finds one, server auto-hydrates env+.cache (same path as POST /dongle) and sets auto_hydrated=true. Never overwrites a user-saved id. Manual Save remains the backup."
     },
     "POST /dongle": {
       "body": {
@@ -33,21 +44,28 @@
         "persisted": true,
         "source": "env+cache",
         "cache_path": ".cache/dongle_id",
-        "cams": ["road", "wide", "driver"],
+        "cams": [
+          "road",
+          "wide",
+          "driver"
+        ],
         "connect_available": "boolean",
         "ssh_available": "boolean",
         "force_fixture": "boolean",
         "adb_available": "boolean",
         "adb_status": "ready | not_on_path | error",
-        "adb_device_count": 0
+        "adb_device_count": 0,
+        "suggested_dongle_id": "16+ hex | null",
+        "discovered_from": "adb | ssh | null",
+        "auto_hydrated": false
       }
     }
   },
   "bind": {
-    "load": "GET /dongle → fill input when configured; leave empty when configured=false",
+    "load": "GET /dongle \u2192 fill input when configured (dongle_id); else prefill from suggested_dongle_id; leave empty when both null",
     "save": "POST /dongle { dongle_id, persist: true } on Save",
     "after_save": "Refresh GET /routes (and Connect status); Connect uses saved id only",
-    "discover": "GET /discover also returns dongle + dongle_id (same shape under dongle key)",
+    "discover": "GET /discover also returns dongle + dongle_id + suggested_dongle_id / discovered_from (same shape under dongle key); matching ADB device may include dongle_id",
     "routes_connect_unset": {
       "request": "GET /routes?source=connect",
       "when": "dongle not saved",
@@ -55,21 +73,37 @@
         "source": "connect",
         "routes": [],
         "empty_reason": "dongle_id_required",
-        "message": "Dongle ID required · set via GUI Save"
+        "message": "Dongle ID required \u00b7 set via GUI Save"
       },
       "never": "silent fixture dongle 3e2de7ed673817c2 as happy path"
     },
-    "routes_fixture_ok": "GET /routes?source=fixture still returns labeled fixture (meta.label=fixture)"
+    "routes_fixture_ok": "GET /routes?source=fixture still returns labeled fixture (meta.label=fixture)",
+    "auto": "Server may auto-hydrate when unset (auto_hydrated=true). UI may also prefill + POST /dongle from suggested_*. Label via discovered_from: 'Auto from ADB' / 'Auto from SSH'. Manual Save remains backup and is never overwritten by discovery."
   },
   "storage": {
     "env": "DISTILLERY_DONGLE_ID",
     "cache": ".cache/dongle_id",
     "gitignored": true,
-    "mirror": "Same pattern as COMMA_JWT → .cache/connect_jwt and SSH → .cache/ssh_config.json"
+    "mirror": "Same pattern as COMMA_JWT \u2192 .cache/connect_jwt and SSH \u2192 .cache/ssh_config.json"
   },
   "ready": {
     "gap_code": "dongle_id_required",
-    "message": "Dongle ID required — POST /dongle (GUI Save) then refresh",
-    "note": "Demo job route remains optional; not required for production readiness. Flash stays gated."
+    "message": "Dongle ID required \u2014 POST /dongle (GUI Save) then refresh",
+    "note": "Demo job route remains optional; not required for production readiness. Flash stays gated. Big teacher / no demo locks unchanged."
+  },
+  "discovery": {
+    "path": "/data/params/d/DongleId",
+    "adb": "adb [-s SERIAL] shell cat /data/params/d/DongleId",
+    "ssh": "ssh user@host cat /data/params/d/DongleId",
+    "prefer": "ADB mici/comma devices first (skip emulators), then SSH when configured",
+    "auto_hydrate": "If DISTILLERY_DONGLE_ID and .cache/dongle_id both unset and discovery finds a real id \u2192 write env + .cache (same as POST /dongle). Never overwrite user-saved id.",
+    "reject": [
+      "UnregisteredDevice",
+      "non-hex",
+      "ADB serial alone",
+      "suggested_host alone",
+      "demo 3e2de7ed673817c2 as default",
+      "fake id when ADB/SSH up but params empty"
+    ]
   }
 }

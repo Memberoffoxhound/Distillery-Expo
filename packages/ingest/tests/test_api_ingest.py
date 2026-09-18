@@ -43,6 +43,13 @@ def test_dongle(client, tmp_path, monkeypatch):
     assert data["adb_status"] in ("ready", "not_on_path", "error")
     assert isinstance(data["adb_device_count"], int)
     assert data["adb_device_count"] >= 0
+    assert "suggested_dongle_id" in data
+    # Never invent a default suggested id when nothing is connected
+    assert data.get("suggested_dongle_id") in (None, "")
+    assert "discovered_from" in data
+    assert data.get("discovered_from") in (None, "")
+    assert "dongle_discovery_source" in data
+    assert "auto_hydrated" in data
 
 
 def test_list_routes_fixture(client):
@@ -145,7 +152,17 @@ def test_discover_overview(client):
     r = client.get("/discover")
     assert r.status_code == 200
     data = r.json()
-    for key in ("devices", "connect", "ssh", "fixture", "sources", "dongle_id"):
+    for key in (
+        "devices",
+        "connect",
+        "ssh",
+        "fixture",
+        "sources",
+        "dongle_id",
+        "suggested_dongle_id",
+        "discovered_from",
+        "dongle_discovery_source",
+    ):
         assert key in data
     assert data["fixture"]["label"] == "fixture"
 

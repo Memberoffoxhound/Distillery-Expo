@@ -56,6 +56,15 @@ export interface DongleInfo {
   adb_available?: boolean;
   /** Future: adb_status — "found" | "scanning" | "missing" | … */
   adb_status?: string | null;
+  configured?: boolean;
+  /** Real DongleId from device params (ADB/SSH) — never invented. */
+  suggested_dongle_id?: string | null;
+  /** Primary: adb | ssh when suggested_dongle_id was read from the device. */
+  discovered_from?: "adb" | "ssh" | string | null;
+  /** Alias of discovered_from. */
+  dongle_discovery_source?: "adb" | "ssh" | string | null;
+  dongle_discovery_serial?: string | null;
+  dongle_discovery_error?: string | null;
 }
 
 /** Nested train device from GET /health and GET /status/runtime. */
@@ -117,6 +126,11 @@ export interface DiscoverDevice {
 
 export interface DiscoverOverview {
   dongle_id?: string;
+  suggested_dongle_id?: string | null;
+  discovered_from?: "adb" | "ssh" | string | null;
+  dongle_discovery_source?: "adb" | "ssh" | string | null;
+  dongle_discovery_serial?: string | null;
+  dongle_discovery_error?: string | null;
   cams?: string[];
   devices?: {
     ok?: boolean;

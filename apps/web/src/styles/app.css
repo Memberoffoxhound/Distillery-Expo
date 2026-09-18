@@ -523,6 +523,19 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   background: var(--panel, #12141a);
   color: inherit;
 }
+
+.dongle-origin-chip {
+  font-size: 0.68rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--accent-dim, #2a4a3a);
+  color: var(--accent, #6ecf9b);
+  white-space: nowrap;
+}
+.dongle-origin-chip.muted {
+  color: var(--text-mute, #8a8f9a);
+  border-color: var(--border, #333);
+}
 .ingest-ssh-details {
   margin: 0.15rem 0;
   font-size: 0.72rem;

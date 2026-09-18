@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DistilleryEvent, StageName } from "../types/events";
 import {
   fetchDongle,
@@ -193,6 +193,9 @@ export function IngestPane({
   const [pickedDevice, setPickedDevice] = useState<string | null>(null);
   const [discover, setDiscover] = useState<DiscoverOverview | null>(null);
   const [dongleDraft, setDongleDraft] = useState("");
+  /** How the draft/saved id was obtained — calm status next to Save. */
+  const [dongleOrigin, setDongleOrigin] = useState<"none" | "saved" | "adb" | "ssh" | "manual">("none");
+  const dongleTouchedRef = useRef(false);
   const [jwtDraft, setJwtDraft] = useState("");
   const [sshHost, setSshHost] = useState("");
   const [sshUser, setSshUser] = useState("comma");
@@ -246,8 +249,71 @@ export function IngestPane({
         })),
       };
       setDongle(enriched);
+
+      const suggestedRaw =
+        overview?.suggested_dongle_id ?? (d as DongleInfo).suggested_dongle_id ?? null;
+      const suggested =
+        typeof suggestedRaw === "string" && suggestedRaw.trim() ? suggestedRaw.trim() : null;
+      const discSourceRaw =
+        overview?.discovered_from ??
+        overview?.dongle_discovery_source ??
+        (d as DongleInfo).discovered_from ??
+        (d as DongleInfo).dongle_discovery_source ??
+        null;
+      const discSource =
+        discSourceRaw === "ssh" ? "ssh" : discSourceRaw === "adb" ? "adb" : null;
+
+      // Prefer saved id; else auto-fill from real device DongleId (never invent).
       if (enriched.dongle_id) {
         setDongleDraft((prev) => (prev.trim() ? prev : enriched.dongle_id));
+        if (!dongleTouchedRef.current) {
+          setDongleOrigin((prev) => (prev === "manual" ? prev : "saved"));
+        }
+      } else if (suggested && !dongleTouchedRef.current) {
+        setDongleDraft((prev) => (prev.trim() ? prev : suggested));
+        if (discSource) setDongleOrigin(discSource);
+      }
+
+      // On discover / LAN refresh: auto-persist when unset and device gave a real id.
+      const shouldAutoPersist =
+        Boolean(suggested) &&
+        !Boolean(enriched.configured) &&
+        !(enriched.dongle_id || "").trim() &&
+        !dongleTouchedRef.current;
+      if (shouldAutoPersist && suggested) {
+        try {
+          const saved = await saveDongleId(suggested, true);
+          enriched.dongle_id = saved.dongle_id || suggested;
+          enriched.configured = true;
+          setDongle({ ...enriched });
+          setDongleDraft(saved.dongle_id || suggested);
+          if (discSource) setDongleOrigin(discSource);
+          // Routes were fetched before persist — refresh live lists with the new id.
+          if (source === "connect" || source === "ssh" || source === "auto") {
+            const r2 = await fetchRoutes(source, 20, {
+              device: deviceId ?? pickedDevice,
+              ssh_host: null,
+            });
+            const askedLive2 = source === "ssh" || source === "connect";
+            const swapped2 = askedLive2 && r2.source === "fixture";
+            setRoutes(swapped2 ? [] : r2.routes);
+            setListSource(swapped2 ? source : r2.source);
+            setRoutesMessage(
+              swapped2
+                ? "SSH/Connect returned fixture unexpectedly — showing empty (live path only)."
+                : r2.message ?? null
+            );
+            setEmptyReason(swapped2 ? "refused_fixture_swap" : r2.empty_reason ?? null);
+            const shown2 = swapped2 ? [] : r2.routes;
+            setSelected((prev) => {
+              if (prev && shown2.some((x) => x.route_id === prev)) return prev;
+              return shown2[0]?.route_id ?? null;
+            });
+          }
+        } catch {
+          // Keep draft filled; manual Save remains backup.
+          if (discSource) setDongleOrigin(discSource);
+        }
       }
       // Explicit source=ssh|connect: never present fixture rows as live SSH/Connect.
       const askedLive = source === "ssh" || source === "connect";
@@ -362,6 +428,8 @@ export function IngestPane({
     setLoading(true);
     try {
       const info = await saveDongleId(id, true);
+      dongleTouchedRef.current = false;
+      setDongleOrigin("manual");
       setDongleDraft(info.dongle_id || id);
       await load("connect", "connect");
     } catch (e) {
@@ -529,9 +597,13 @@ export function IngestPane({
       <div className="ingest-dongle-row" aria-label="Dongle ID">
         <input
           type="text"
-          placeholder="Dongle ID (required for Connect)"
+          placeholder="Dongle ID (auto from ADB/SSH or type)"
           value={dongleDraft}
-          onChange={(e) => setDongleDraft(e.target.value)}
+          onChange={(e) => {
+            dongleTouchedRef.current = true;
+            setDongleOrigin("manual");
+            setDongleDraft(e.target.value);
+          }}
           disabled={loading}
           aria-label="Dongle ID"
           className="mono"
@@ -539,10 +611,30 @@ export function IngestPane({
         <button
           disabled={loading || !dongleDraft.trim() || dongleDraft.trim().length < 8}
           onClick={() => void saveDongle()}
-          title="POST /dongle {dongle_id, persist}"
+          title="POST /dongle {dongle_id, persist} — manual Save backup"
         >
           Save Dongle
         </button>
+        {dongleOrigin === "adb" && (
+          <span className="dongle-origin-chip" title="Read /data/params/d/DongleId via ADB">
+            Auto from ADB
+          </span>
+        )}
+        {dongleOrigin === "ssh" && (
+          <span className="dongle-origin-chip" title="Read /data/params/d/DongleId via SSH">
+            Auto from SSH
+          </span>
+        )}
+        {dongleOrigin === "manual" && dongleDraft.trim() && (
+          <span className="dongle-origin-chip muted" title="Typed / Save Dongle">
+            Manual Save
+          </span>
+        )}
+        {dongleOrigin === "saved" && dongle?.dongle_id && (
+          <span className="dongle-origin-chip muted" title="Loaded from cache / env">
+            Saved
+          </span>
+        )}
       </div>
 
       <div className="ingest-actions primary-row">

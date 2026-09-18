@@ -22,6 +22,8 @@ def test_select_default_fixture():
     assert t is not None
     assert t["source"] == "fixture"
     assert t["live"] is False
+    assert t["name"] == "big_driving_supercombo"
+    assert "big_driving_supercombo" in t.get("label", "")
 
 
 def test_select_by_name():

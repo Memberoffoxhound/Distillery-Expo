@@ -20,6 +20,7 @@ from distillery_events import (
 )
 from distillery_teacher.config import TeacherConfig, load_teacher_config
 from distillery_teacher.device import TeacherDeviceInfo, detect_teacher_device
+from distillery_teacher.download import BIG_TEACHER_NAME, ensure_big_teacher_onnx
 from distillery_teacher.fixture import build_fixture_batches, write_soft_label_artifacts
 from distillery_teacher.models import SoftLabelBatch
 
@@ -85,7 +86,7 @@ async def run_teach_pipeline(
 
     force_fixture = cfg.force_fixture or prefer == "fixture"
 
-    await stage_status("running", "Cinque/supercombo soft-label pass (no Chestnut)")
+    await stage_status("running", f"{BIG_TEACHER_NAME} soft-label pass (big only; no Chestnut)")
     await log(
         f"teacher={cfg.name} prefer={prefer} route_id={route_id or 'auto'} "
         f"force_fixture={cfg.force_fixture}"
@@ -147,6 +148,67 @@ async def run_teach_pipeline(
     await log(device.detail, level="info" if device.live else "warn")
     await progress(0.15, device.backend)
     await asyncio.sleep(tick)
+
+    # Pull big_driving_supercombo into artifacts/teachers/ (cache+checksum; no small fallback)
+    await progress(0.18, f"ensure teacher ONNX · {BIG_TEACHER_NAME}")
+    await log(f"Ensuring comma master teacher artifact: {BIG_TEACHER_NAME}")
+
+    def _prog(frac: float, detail: str) -> None:
+        # sync callback — best-effort; detailed progress emitted after thread returns
+        pass
+
+    art = await asyncio.to_thread(
+        ensure_big_teacher_onnx,
+        force_fixture=force_fixture,
+        progress=_prog,
+    )
+    await _emit(
+        emit,
+        make_event(
+            job_id,
+            EventKind.progress,
+            ProgressPayload(
+                fraction=0.22,
+                detail=art.label or f"teacher · {BIG_TEACHER_NAME}",
+            ),
+            stage=stage,
+        ),
+    )
+    await log(
+        f"teacher artifact: label={art.label} live={art.live} cached={art.cached} "
+        f"path={art.path} ok={art.ok}"
+        + (f" error={art.error}" if art.error else "")
+    )
+    if not art.live:
+        await _emit(
+            emit,
+            make_event(
+                job_id,
+                EventKind.warning,
+                WarningPayload(
+                    code="TEACHER_ONNX_FIXTURE",
+                    message=(
+                        f"{art.label}: offline or download failed — "
+                        "using labeled fixture soft labels (never pretend live; "
+                        "no driving_supercombo fallback)"
+                    ),
+                    recoverable=True,
+                ),
+                stage=stage,
+            ),
+        )
+    elif art.path and not cfg.checkpoint:
+        # Wire checkpoint to cached ONNX for live claim path
+        cfg = TeacherConfig(
+            name=cfg.name if cfg.name else BIG_TEACHER_NAME,
+            device_label=cfg.device_label,
+            checkpoint=str(art.path),
+            output_dir=cfg.output_dir,
+            force_fixture=cfg.force_fixture,
+            repo_root=cfg.repo_root,
+        )
+    await asyncio.sleep(tick)
+
 
     # Without in-repo Cinque weights, never claim live unless explicitly opted in.
     allow_claim_live = (

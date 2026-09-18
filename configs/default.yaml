@@ -14,10 +14,12 @@ ingest:
   force_fixture: false
 
 teacher:
-  name: "Cinque/supercombo"
+  name: "big_driving_supercombo"
   device: "7090 XT"
   # placeholder — real weights wired in later milestone
   checkpoint: null
+  # Big teacher ONNX cache (commaai/openpilot@master) — no small-model fallback
+  teachers_dir: artifacts/teachers
 
 student:
   name: "stock-modelV2-I/O"

@@ -107,8 +107,8 @@ def check_train_readiness(
                 "message": (
                     "No comma-master teacher selected "
                     f"(requested={teacher_name!r}). "
-                    "Call list_comma_master_teachers() / select driving_supercombo "
-                    "(no Chestnut)."
+                    "Need big_driving_supercombo (comma master · big_driving_supercombo); "
+                    "no driving_supercombo fallback; no Chestnut."
                 ),
             }
         )
@@ -121,12 +121,55 @@ def check_train_readiness(
                     "code": "teacher_not_selected",
                     "message": (
                         "comma-master teacher is fixture-only "
-                        f"({teacher_selected.get('name')}, live=false). "
-                        "Select a live openpilot master artifact or set "
-                        "DISTILLERY_ALLOW_TOY_TRAIN=1 for CI."
+                        f"({teacher_selected.get('label') or teacher_selected.get('name')}, "
+                        "live=false). Need live big_driving_supercombo "
+                        "(comma master · big_driving_supercombo) — "
+                        "no driving_supercombo fallback. "
+                        "Or set DISTILLERY_ALLOW_TOY_TRAIN=1 for CI."
                     ),
                 }
             )
+
+    teacher_artifact: dict[str, Any] | None = None
+    try:
+        from distillery_teacher.download import BIG_TEACHER_NAME, cached_big_teacher_ok
+
+        cached = cached_big_teacher_ok()
+        if cached is not None:
+            teacher_artifact = cached.as_dict()
+            if teacher_selected is not None:
+                teacher_selected = dict(teacher_selected)
+                teacher_selected["label"] = teacher_artifact.get("label") or (
+                    f"comma master · {BIG_TEACHER_NAME}"
+                )
+                teacher_selected["artifact_path"] = teacher_artifact.get("path")
+                teacher_selected["sha256"] = teacher_artifact.get("sha256")
+                teacher_selected["live"] = True
+                teacher_selected["source"] = teacher_artifact.get("source")
+        elif teacher_selected is not None:
+            # No on-disk cache yet — keep listing label; download happens in teach/train_all
+            teacher_selected = dict(teacher_selected)
+            teacher_selected.setdefault(
+                "label",
+                (
+                    f"comma master · {BIG_TEACHER_NAME}"
+                    if teacher_selected.get("live")
+                    else f"fixture · {BIG_TEACHER_NAME}"
+                ),
+            )
+            teacher_artifact = {
+                "name": BIG_TEACHER_NAME,
+                "ok": False,
+                "live": False,
+                "cached": False,
+                "path": None,
+                "label": f"fixture · {BIG_TEACHER_NAME}"
+                if teacher_selected.get("source") == "fixture"
+                else f"pending · {BIG_TEACHER_NAME}",
+                "detail": "not cached under artifacts/teachers/ yet (pulled on teach/train_all)",
+            }
+    except Exception:  # noqa: BLE001
+        teacher_artifact = None
 
     ok = len(gaps) == 0
     return {
@@ -136,6 +179,7 @@ def check_train_readiness(
         "hours_gate": gate,
         "device": device,
         "teacher": teacher_selected,
+        "teacher_artifact": teacher_artifact,
         "min_train_hours": floor,
         "allow_toy": bool(toy),
         "live": False,

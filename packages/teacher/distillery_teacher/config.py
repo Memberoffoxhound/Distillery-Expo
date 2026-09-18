@@ -12,7 +12,7 @@ import yaml
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_CONFIG = _REPO_ROOT / "configs" / "default.yaml"
 
-DEFAULT_TEACHER = "Cinque/supercombo"
+DEFAULT_TEACHER = "big_driving_supercombo"
 DEFAULT_DEVICE_LABEL = "7090 XT"
 
 

@@ -770,6 +770,46 @@ async def _run_train_all_job(
             prefer=prefer,  # type: ignore[arg-type]
             tick=0.08,
         )
+        # Pull big_driving_supercombo into artifacts/teachers/ before teach (cache+checksum)
+        from distillery_teacher.download import BIG_TEACHER_NAME, ensure_big_teacher_onnx
+
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "progress",
+                "stage": "teach",
+                "payload": {
+                    "fraction": 0.02,
+                    "detail": f"ensure teacher ONNX · {BIG_TEACHER_NAME}",
+                },
+            },
+        )
+        art = await asyncio.to_thread(
+            ensure_big_teacher_onnx,
+            force_fixture=(prefer_ml == "fixture"),
+        )
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "log",
+                "stage": "teach",
+                "payload": {
+                    "level": "info" if art.live else "warn",
+                    "message": (
+                        f"teacher ready: {art.label} cached={art.cached} "
+                        f"path={art.path} live={art.live}"
+                        + (f" err={art.error}" if art.error else "")
+                    ),
+                    "source": "teach",
+                },
+            },
+        )
         await _call_stage(
             resolve_teach(), job_id, emit, route_id=rid, prefer=prefer_ml, tick=0.06
         )
@@ -930,14 +970,40 @@ async def discover_ssh_test() -> dict[str, Any]:
 async def get_teachers(
     force_fixture: bool = Query(False),
 ) -> dict[str, Any]:
-    """List commaai/openpilot@master stock teachers (fixture-labeled when offline)."""
+    """List commaai/openpilot@master teachers; default selected = big_driving_supercombo.
+
+    Live label: ``comma master · big_driving_supercombo``. Offline → fixture labeled.
+    Never silently selects driving_supercombo.
+    """
+    from distillery_teacher.download import BIG_TEACHER_NAME, cached_big_teacher_ok
+
     teachers = list_comma_master_teachers(force_fixture=force_fixture)
     selected = select_comma_master_teacher(force_fixture=force_fixture)
+    cached = None if force_fixture else cached_big_teacher_ok()
+    artifact = cached.as_dict() if cached is not None else None
+    if selected is not None and artifact and artifact.get("live"):
+        selected = dict(selected)
+        selected["label"] = artifact.get("label") or f"comma master · {BIG_TEACHER_NAME}"
+        selected["artifact_path"] = artifact.get("path")
+        selected["sha256"] = artifact.get("sha256")
+        selected["live"] = True
+        selected["source"] = artifact.get("source")
+    label = (selected or {}).get("label")
+    if not label and selected:
+        label = (
+            f"comma master · {selected.get('name')}"
+            if selected.get("live")
+            else f"fixture · {selected.get('name')}"
+        )
     return {
         "teachers": teachers,
         "selected": selected,
         "count": len(teachers),
-        "source": (selected or {}).get("source") or ("fixture" if force_fixture else "commaai/openpilot@master"),
+        "source": (selected or {}).get("source")
+        or ("fixture" if force_fixture else "commaai/openpilot@master"),
+        "label": label or f"fixture · {BIG_TEACHER_NAME}",
+        "teacher_artifact": artifact,
+        "default_teacher": BIG_TEACHER_NAME,
     }
 
 

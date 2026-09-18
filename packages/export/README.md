@@ -1,5 +1,17 @@
-# packages/export
+# packages/export (`distillery_export`)
 
-**v1 scope:** Export trained student to deployable artifact (ONNX / QCOM-friendly). Validate I/O shapes vs stock modelV2.
+Export trained student to a deployable ONNX artifact with **stock modelV2 I/O**.
 
-**M0:** stub only — demo emits export progress + artifact path log.
+## Entrypoint
+
+```python
+from distillery_export import run_export_pipeline
+
+result = await run_export_pipeline(job_id, emit, tick=0.0)
+# result["onnx_path"], result["sidecar_path"], result["io"]
+```
+
+- Prefers real ONNX via the optional `onnx` package.
+- Otherwise writes a minimal `.onnx` protobuf stub **plus**
+  `student_modelV2_io.onnx.json` sidecar documenting I/O shapes.
+- Output: `artifacts/export/student_modelV2_io.onnx`

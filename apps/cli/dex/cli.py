@@ -59,13 +59,18 @@ def cmd_routes(args: argparse.Namespace) -> int:
     from distillery_ingest.resolve import list_routes
 
     cfg = load_ingest_config()
-    src, routes = list_routes(cfg, prefer=args.source, limit=args.limit)
+    result = list_routes(cfg, prefer=args.source, limit=args.limit)
     print(
         json.dumps(
             {
                 "dongle_id": cfg.dongle_id,
-                "source": src.name,
-                "routes": [r.summary_dict() for r in routes],
+                "source": result.source.name,
+                "count": result.count,
+                "path": result.path,
+                "ok": result.ok,
+                "error": result.error,
+                "message": result.message,
+                "routes": [r.summary_dict() for r in result.routes],
             },
             indent=2,
         )

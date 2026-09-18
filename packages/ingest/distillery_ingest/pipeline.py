@@ -80,7 +80,8 @@ async def run_ingest_pipeline(
     await asyncio.sleep(tick)
 
     # Resolve listing first so decision has real source name
-    source, routes = await asyncio.to_thread(list_routes, cfg, prefer=prefer, limit=10)
+    listing = await asyncio.to_thread(list_routes, cfg, prefer=prefer, limit=10)
+    source, routes = listing.source, listing.routes
     await _emit(
         emit,
         make_event(
@@ -116,8 +117,18 @@ async def run_ingest_pipeline(
             source, route = await asyncio.to_thread(
                 get_route, route.route_id, cfg, prefer=prefer
             )
-    else:
+    elif prefer == "fixture" or source.name == "fixture":
         source, route = await asyncio.to_thread(get_route, "fixture", cfg, prefer="fixture")
+    else:
+        # Live source listed 0 routes (or error) — do not silently ingest fixture.
+        detail = getattr(listing, "message", None) or f"{source.name} returned 0 routes"
+        raise RuntimeError(detail)
+
+    if route is None:
+        raise RuntimeError(
+            f"route not found via {source.name}"
+            + (f" (prefer={prefer})" if prefer else "")
+        )
 
     await log(f"Selected route {route.route_id} ({route.display_name}) via {route.source}")
     await progress(0.4, f"route={route.route_id}")

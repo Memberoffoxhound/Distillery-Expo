@@ -48,12 +48,15 @@ def resolve_route_for_pack(
         if route_id:
             _src, route = get_route(route_id, ingest_cfg, prefer=prefer)  # type: ignore[arg-type]
         else:
-            _src, routes = list_routes(ingest_cfg, prefer=prefer, limit=5)  # type: ignore[arg-type]
+            listing = list_routes(ingest_cfg, prefer=prefer, limit=5)  # type: ignore[arg-type]
+            routes = listing.routes
             if not routes:
                 return load_fixture_route(), True
             route = routes[0]
             if not route.segments:
                 _src, route = get_route(route.route_id, ingest_cfg, prefer=prefer)  # type: ignore[arg-type]
+        if route is None:
+            return load_fixture_route(), True
         if route.source == "fixture" or route.meta.get("fixture"):
             return route, True
         return route, False

@@ -1074,19 +1074,27 @@ async def get_routes(
 
     After discovery, pass `device` and/or `ssh_host` (+ `source`) so the picker
     does not require shell env archaeology.
+
+    When source=ssh (or auto resolves to SSH): empty realdata or SSH errors return
+    an honest empty/error payload — never a silent fixture swap.
     """
     cfg = apply_discovered_overrides(
         load_ingest_config(),
         ssh_host=ssh_host,
         device_id=device,
     )
-    src, routes = ingest_list_routes(cfg, prefer=source, limit=limit)
+    result = ingest_list_routes(cfg, prefer=source, limit=limit)
     return {
         "dongle_id": cfg.dongle_id,
-        "source": src.name,
+        "source": result.source.name,
+        "count": result.count,
+        "path": result.path,
+        "ok": result.ok,
+        "error": result.error,
+        "message": result.message,
         "device": device,
         "ssh_host": cfg.ssh_host,
-        "routes": [r.summary_dict() for r in routes],
+        "routes": [r.summary_dict() for r in result.routes],
     }
 
 
@@ -1099,7 +1107,20 @@ async def get_route_detail(
 
     cfg = load_ingest_config()
     src, route = ingest_get_route(route_id, cfg, prefer=source)
-    return {"source": src.name, "route": route.model_dump(mode="json")}
+    if route is None:
+        return {
+            "source": src.name,
+            "ok": False,
+            "error": f"route not found via {src.name}",
+            "message": f"{src.name} · route not found: {route_id}",
+            "route": None,
+        }
+    return {
+        "source": src.name,
+        "ok": True,
+        "error": None,
+        "route": route.model_dump(mode="json"),
+    }
 
 
 @app.post("/jobs/demo", response_model=JobSummary)

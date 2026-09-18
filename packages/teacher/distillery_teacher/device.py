@@ -76,7 +76,7 @@ def detect_teacher_device(*, force_fixture: bool = False) -> TeacherDeviceInfo:
             live=False,
             backend="fixture",
             device="fixture",
-            detail="force_fixture — soft labels from fixture (live=false)",
+            detail="force_fixture / DISTILLERY_TEACHER_FIXTURE — last-resort CI soft labels (live=false)",
             meta={"live": False, "source": "fixture", "teacher": "Cinque/supercombo"},
         )
 
@@ -125,7 +125,8 @@ def detect_teacher_device(*, force_fixture: bool = False) -> TeacherDeviceInfo:
             device=seen,
             detail=(
                 f"AMD/ROCm device present ({seen}); live Cinque soft-labels still "
-                "need confirmed 7090 XT + weights — fixture soft labels (live=false)"
+                "need confirmed 7090 XT + verified big_driving_supercombo cache "
+                "(live path preferred; fixture only via DISTILLERY_TEACHER_FIXTURE)"
             ),
             meta={
                 "live": False,
@@ -144,7 +145,9 @@ def detect_teacher_device(*, force_fixture: bool = False) -> TeacherDeviceInfo:
         backend="fixture",
         device="fixture",
         detail=(
-            "No AMD/ROCm teacher GPU detected — fixture soft labels (live=false). "
+            "No AMD/ROCm teacher GPU detected — not live. "
+            "Prefer verified big_driving_supercombo under artifacts/teachers/; "
+            "fixture soft labels only via DISTILLERY_TEACHER_FIXTURE (CI). "
             "Live Cinque path prefers RX 7090 XT when available."
         ),
         meta={

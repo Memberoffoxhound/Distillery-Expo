@@ -81,7 +81,7 @@ def build_fixture_batches(
                     "teacher": TEACHER_NAME,
                     "device": "fixture",
                     "label": "fixture",
-                    "reason": "no AMD/ROCm/7090 XT or force_fixture — never claim live GPU",
+                    "reason": "last-resort fixture (no live cache / force_fixture / DISTILLERY_TEACHER_FIXTURE) — never claim live GPU",
                 },
             )
         )

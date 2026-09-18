@@ -770,7 +770,7 @@ async def _fixture_flash(
 
 
 # ---------------------------------------------------------------------------
-# Public resolvers — prefer Graig packages, else fixture
+# Public resolvers — prefer Graig live packages; fixture adapters are last-resort only
 # ---------------------------------------------------------------------------
 
 

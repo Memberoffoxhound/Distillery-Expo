@@ -252,3 +252,75 @@ def test_check_train_readiness_device_not_ready_when_probe_fails(monkeypatch, tm
     ready = check_train_readiness(cfg=cfg, force_fixture=False, allow_toy=True, teacher_name="driving_supercombo")
     codes = {g["code"] for g in ready["gaps"]}
     assert "device_not_ready" in codes
+
+
+def test_check_train_readiness_missing_live_cache_is_gap(monkeypatch, tmp_path):
+    """Live train without artifacts/teachers cache is a gap (unless CI override)."""
+    monkeypatch.delenv("DISTILLERY_ALLOW_TOY_TRAIN", raising=False)
+    monkeypatch.delenv("DISTILLERY_TEACHER_FIXTURE", raising=False)
+    monkeypatch.delenv("DISTILLERY_STUDENT_FIXTURE", raising=False)
+    from dataclasses import replace
+
+    import distillery_student.readiness as readiness_mod
+
+    def _ready_cpu(*, force_fixture: bool = False):
+        return {
+            "device_found": True,
+            "device_ready": True,
+            "device_kind": "cpu",
+            "device_name": "CPU",
+            "tinygrad": "ok",
+            "live": True,
+            "source": "tinygrad",
+            "data_source": "live",
+            "detail": "tinygrad Device.DEFAULT=CPU",
+        }
+
+    monkeypatch.setattr(readiness_mod, "probe_train_device", _ready_cpu)
+
+    # Live listing, but no on-disk cache
+    live_teacher = {
+        "name": "big_driving_supercombo",
+        "version": "master",
+        "source": "commaai/openpilot@master",
+        "live": True,
+        "label": "comma master · big_driving_supercombo",
+        "role": "big",
+    }
+
+    def _select(name=None, *, force_fixture=False):
+        return None if force_fixture else dict(live_teacher)
+
+    import distillery_teacher.comma_master as cm
+
+    monkeypatch.setattr(cm, "select_comma_master_teacher", _select)
+    monkeypatch.setattr(
+        "distillery_teacher.download.cached_big_teacher_ok",
+        lambda *a, **k: None,
+    )
+
+    soft = tmp_path / "soft"
+    soft.mkdir()
+    (soft / "manifest.json").write_text(
+        '{"hours": 60, "live": true, "source": "live", "n_samples": 1000}\n'
+    )
+    cfg = replace(
+        load_student_config(),
+        soft_labels_dir=soft,
+        shards_dir=tmp_path / "shards",
+        allow_toy_train=False,
+        force_fixture=False,
+        min_train_hours=50.0,
+    )
+    ready = check_train_readiness(cfg=cfg, force_fixture=False, allow_toy=False)
+    assert ready["ok"] is False
+    codes = {g["code"] for g in ready["gaps"]}
+    assert "teacher_not_selected" in codes
+    assert any("artifacts/teachers" in g["message"] for g in ready["gaps"])
+
+
+def test_ingest_fixture_does_not_force_student_config(monkeypatch):
+    monkeypatch.delenv("DISTILLERY_STUDENT_FIXTURE", raising=False)
+    monkeypatch.setenv("DISTILLERY_INGEST_FIXTURE", "1")
+    cfg = load_student_config()
+    assert cfg.force_fixture is False

@@ -14,7 +14,6 @@ from distillery_teacher.fixture import build_fixture_batches
 @pytest.fixture(autouse=True)
 def _force_fixture(monkeypatch):
     monkeypatch.setenv("DISTILLERY_TEACHER_FIXTURE", "1")
-    monkeypatch.setenv("DISTILLERY_INGEST_FIXTURE", "1")
     monkeypatch.delenv("DISTILLERY_TEACHER_LIVE", raising=False)
 
 
@@ -75,3 +74,10 @@ def test_teach_pipeline_emits_live_false():
     decisions = [e for e in parsed if e.kind == EventKind.decision]
     assert decisions
     assert "Chestnut" not in (decisions[0].payload.get("chosen") or "")
+
+
+def test_ingest_fixture_does_not_force_teacher_config(monkeypatch):
+    monkeypatch.delenv("DISTILLERY_TEACHER_FIXTURE", raising=False)
+    monkeypatch.setenv("DISTILLERY_INGEST_FIXTURE", "1")
+    cfg = load_teacher_config()
+    assert cfg.force_fixture is False

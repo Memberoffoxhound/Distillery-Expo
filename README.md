@@ -121,10 +121,22 @@ Env for live device paths:
 
 ## ML train readiness (Phil / Bruce)
 
+Happy path = live comma master **`big_driving_supercombo`** under `artifacts/teachers/`.
+Fixture / toy paths are **last-resort CI only** (`live=false` / not licensed) — never the default.
+
 Train refuses below **50 hours** of driving data unless `DISTILLERY_ALLOW_TOY_TRAIN=1`
-(or `student.allow_toy_train` in config) for fixture CI — still `live=false` / not licensed.
+(or `student.allow_toy_train` in config) for CI — still `live=false` / not licensed.
+`check_train_readiness` treats a fixture teacher or missing live cache as a gap unless
+an explicit toy / `force_fixture` / `DISTILLERY_TEACHER_FIXTURE=1` override is set.
 Eval forces `eval_passed=false` with `fail_reason=insufficient_hours` on the same floor
 when toy is not allowed.
+
+| Var | Purpose |
+|-----|---------|
+| `DISTILLERY_TEACHER_FIXTURE=1` | CI only — labeled fixture teacher (`live=false`) |
+| `DISTILLERY_STUDENT_FIXTURE=1` | CI only — fixture student/data path |
+| `DISTILLERY_ALLOW_TOY_TRAIN=1` | CI only — bypass ≥50h floor (`live=false`) |
+| `DISTILLERY_INGEST_FIXTURE=1` | ingest offline only — does **not** force ML fixture |
 
 Craig import paths (no API wiring required):
 
@@ -143,7 +155,8 @@ from distillery_teacher import (
 `probe_train_device()` → `{device_found, device_ready, device_kind, device_name, tinygrad}`
 (`tinygrad` ∈ ok|missing|fixture; not 7090-locked).
 
-`list_comma_master_teachers()` offline → `source=fixture` teachers (no Chestnut).
+`list_comma_master_teachers()` with explicit `force_fixture` / `DISTILLERY_TEACHER_FIXTURE`
+→ `source=fixture` teachers (no Chestnut). Default prefers live listing + cache.
 
 ## Layout
 

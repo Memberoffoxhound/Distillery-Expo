@@ -64,12 +64,13 @@ def load_student_config(config_path: Path | str | None = None) -> StudentConfig:
     if not out_path.is_absolute():
         out_path = _REPO_ROOT / out_path
 
+    # Explicit student CI flag only — ingest fixture must not soft-force train path.
     force = os.environ.get("DISTILLERY_STUDENT_FIXTURE", "").lower() in (
         "1",
         "true",
         "yes",
     )
-    if os.environ.get("DISTILLERY_INGEST_FIXTURE", "").lower() in ("1", "true", "yes"):
+    if block.get("force_fixture"):
         force = True
 
     min_hours = float(block.get("min_train_hours") or 50)

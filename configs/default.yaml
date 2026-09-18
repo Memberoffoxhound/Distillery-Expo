@@ -16,8 +16,10 @@ ingest:
 teacher:
   name: "big_driving_supercombo"
   device: "7090 XT"
-  # placeholder — real weights wired in later milestone
+  # Live path: verified ONNX under teachers_dir (POST /teachers/pull).
+  # force_fixture / DISTILLERY_TEACHER_FIXTURE=1 is CI last-resort only (live=false).
   checkpoint: null
+  force_fixture: false
   # Big teacher ONNX cache (commaai/openpilot@master) — no small-model fallback
   teachers_dir: artifacts/teachers
 
@@ -28,8 +30,9 @@ student:
   io_compatible: true
   checkpoint: null
   min_train_hours: 50
-  # CI only — still live=false / not licensed
+  # CI last-resort only — still live=false / not licensed; never default
   allow_toy_train: false
+  force_fixture: false
 
 pipeline:
   stages:

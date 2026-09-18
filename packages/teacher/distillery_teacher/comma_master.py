@@ -143,13 +143,12 @@ def list_comma_master_teachers(
     Returns list of dicts with keys including:
       name, version, source, artifact_url (or None), artifact_ref
 
-    Offline / ``DISTILLERY_TEACHER_FIXTURE=1`` / ``force_fixture`` →
-    ``source=fixture``, ``live=false``. Never lists Chestnut.
+    Offline / ``DISTILLERY_TEACHER_FIXTURE=1`` / ``force_fixture`` ->
+    ``source=fixture``, ``live=false`` (last-resort CI only; never the default).
+    Never lists Chestnut. ``DISTILLERY_INGEST_FIXTURE`` does not force teacher fixture.
     """
-    if force_fixture or _env_truthy("DISTILLERY_TEACHER_FIXTURE") or _env_truthy(
-        "DISTILLERY_INGEST_FIXTURE"
-    ):
-        return _fixture_teachers(reason="force_fixture / env")
+    if force_fixture or _env_truthy("DISTILLERY_TEACHER_FIXTURE"):
+        return _fixture_teachers(reason="force_fixture / DISTILLERY_TEACHER_FIXTURE")
 
     entries = _fetch_github_models(timeout=timeout)
     if entries is None:

@@ -44,10 +44,13 @@ async def run_teach_pipeline(
     write_files: bool = True,
     n_batches: int = 4,
 ) -> list[SoftLabelBatch]:
-    """Produce soft labels; fixture path always sets live=false / source=fixture.
+    """Produce soft labels; prefer live big_driving_supercombo cache.
 
-    No Chestnut. Live path only when AMD/ROCm/7090 XT is detected *and* a live
-    checkpoint is explicitly enabled; otherwise clearly labeled fixture soft labels.
+    No Chestnut. No driving_supercombo fallback. Fixture path (prefer=fixture /
+    DISTILLERY_TEACHER_FIXTURE / missing live weights) always sets live=false /
+    source=fixture and is last-resort CI only — never the default happy path.
+    Live path only when AMD/ROCm/7090 XT is detected *and* a live checkpoint is
+    explicitly enabled.
     """
     cfg = cfg or load_teacher_config()
     stage = StageName.teach
@@ -108,7 +111,8 @@ async def run_teach_pipeline(
                     code="TEACHER_GPU_MISSING",
                     message=(
                         "prefer=live but no 7090 XT / ROCm Cinque path — "
-                        "falling back to fixture soft labels (live=false)"
+                        "emitting labeled fixture soft labels "
+                        "(live=false; last-resort, not licensed)"
                     ),
                     recoverable=True,
                 ),
@@ -131,9 +135,11 @@ async def run_teach_pipeline(
             DecisionPayload(
                 title="Teacher backend",
                 rationale=(
-                    "Cinque/supercombo on RX 7090 XT when available. "
+                    "Live happy path: big_driving_supercombo on RX 7090 XT "
+                    "with verified artifacts/teachers cache. "
                     "Chestnut excluded by v1 design lock. "
-                    "Missing GPU → labeled fixture soft labels (never claim live)."
+                    "Fixture soft labels only as last-resort CI "
+                    "(never claim live; never default)."
                 ),
                 options_considered=[
                     "Cinque/supercombo@7090XT",
@@ -216,8 +222,8 @@ async def run_teach_pipeline(
                     code="TEACHER_ONNX_FIXTURE",
                     message=(
                         f"{art.label}: offline or download failed — "
-                        "using labeled fixture soft labels (never pretend live; "
-                        "no driving_supercombo fallback)"
+                        "labeled fixture last-resort (live=false / not licensed; "
+                        "never pretend live; no driving_supercombo fallback)"
                     ),
                     recoverable=True,
                 ),

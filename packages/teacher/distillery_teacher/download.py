@@ -197,20 +197,23 @@ def ensure_big_teacher_onnx(
 ) -> TeacherArtifactStatus:
     """Ensure artifacts/teachers/big_driving_supercombo.onnx is present.
 
-    Skip if cached + checksum ok. Offline / fixture → labeled fixture status
-    (ok may be False for live readiness; never claims live; never swaps to small).
+    Prefer live cache under artifacts/teachers/. Skip if cached + checksum ok.
+    Offline / explicit force_fixture -> labeled fixture (ok=False; never default).
+    Never claims live; never swaps to small.
     """
-    if force_fixture or _env_truthy("DISTILLERY_TEACHER_FIXTURE") or _env_truthy(
-        "DISTILLERY_INGEST_FIXTURE"
-    ):
+    # Explicit CI / offline only — never the default happy path.
+    if force_fixture or _env_truthy("DISTILLERY_TEACHER_FIXTURE"):
         return TeacherArtifactStatus(
-            ok=True,
+            ok=False,
             live=False,
             cached=False,
             path=None,
             source="fixture",
             label=f"fixture · {BIG_TEACHER_NAME}",
-            detail="fixture teacher — force_fixture / env (live=false; big only; no Chestnut)",
+            detail=(
+                "fixture teacher — force_fixture / DISTILLERY_TEACHER_FIXTURE "
+                "(live=false / not licensed; last-resort CI only; big only; no Chestnut)"
+            ),
         )
 
     if not force_download:

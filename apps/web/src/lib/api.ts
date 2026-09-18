@@ -225,6 +225,8 @@ export interface TeacherInfo {
   model_version?: string | null;
   live?: boolean;
   fixture?: boolean;
+  label?: string | null;
+  teacher_artifact?: TeacherArtifact | null;
   [key: string]: unknown;
 }
 
@@ -364,44 +366,344 @@ export function fetchReady(opts?: {
   return jsonFetch(`/ready${qs ? `?${qs}` : ""}`);
 }
 
+export interface TeacherArtifact {
+  name?: string;
+  ok?: boolean;
+  live?: boolean;
+  cached?: boolean;
+  path?: string | null;
+  sha256?: string | null;
+  source?: string | null;
+  label?: string | null;
+  detail?: string | null;
+  error?: string | null;
+  bytes?: number;
+  [key: string]: unknown;
+}
+
+/** POST /teachers/pull start response (Craig #24 / docs/teachers-pull-contract.json). */
+export interface TeacherPullJobStart {
+  id: string;
+  kind: string;
+  status: string;
+  created_at?: string;
+  teacher?: string;
+  default_teacher?: string;
+  label?: string | null;
+  live?: boolean;
+  cached?: boolean;
+  ok?: boolean | null;
+  teacher_artifact?: TeacherArtifact | null;
+  ws?: string;
+  events_url?: string;
+}
+
+export interface TeacherPullResult extends TeacherInfo {
+  ok?: boolean;
+  label?: string | null;
+  teacher_artifact?: TeacherArtifact | null;
+  progress?: { fraction: number; detail?: string };
+  error?: string | null;
+  jobId?: string;
+}
+
+export type TeacherPullProgressCb = (update: {
+  fraction: number;
+  detail?: string;
+  event?: Record<string, unknown>;
+}) => void;
+
+function normalizeTeachersPayload(raw: {
+  teachers?: TeacherModel[];
+  selected?: TeacherModel | null;
+  source?: string | null;
+  label?: string | null;
+  teacher_artifact?: TeacherArtifact | null;
+  count?: number;
+}): TeacherInfo {
+  const rawList = raw.teachers ?? [];
+  const list = rawList.filter(isBigTeacher);
+  // Prefer verified cache artifact over catalog listing (listing may be fixture when GitHub is down).
+  const artifact = raw.teacher_artifact ?? null;
+  const artifactLive = artifact?.live === true;
+  // Prefer label from GET /teachers when Craig sets comma master · / fixture ·
+  const apiLabel = typeof raw.label === "string" ? raw.label : null;
+  // The API may still select the old stock model; never let that selection
+  // leak into Teach. Prefer a big entry from the filtered catalog instead.
+  let selected = isBigTeacher(raw.selected) ? raw.selected : list[0] ?? null;
+  if (artifactLive && selected) {
+    selected = {
+      ...selected,
+      live: true,
+      fixture: false,
+      source: String(artifact?.source ?? "comma_master"),
+      label: String(artifact?.label ?? apiLabel ?? `comma master · ${BIG_TEACHER_NAME}`),
+    };
+  } else if (apiLabel?.startsWith("comma master") && selected) {
+    selected = {
+      ...selected,
+      live: true,
+      fixture: false,
+      source: "comma_master",
+      label: apiLabel,
+    };
+  }
+  const src = String(
+    artifactLive || apiLabel?.startsWith("comma master")
+      ? artifact?.source ?? "comma_master"
+      : raw.source ?? selected?.source ?? ""
+  );
+  const live =
+    artifactLive ||
+    apiLabel?.startsWith("comma master") === true ||
+    selected?.live === true ||
+    src.includes("openpilot") ||
+    src === "comma_master";
+  const fixture =
+    !live &&
+    (apiLabel?.startsWith("fixture") === true ||
+      src === "fixture" ||
+      selected?.source === "fixture" ||
+      selected?.live === false ||
+      artifact?.live === false);
+  return {
+    selected,
+    teachers: list,
+    status: fixture ? "fixture" : live ? "live" : "unknown",
+    source: fixture ? "fixture" : live ? "comma_master" : raw.source ?? null,
+    model_name: selected?.name ?? BIG_TEACHER_NAME,
+    model_version: selected?.version ?? null,
+    live,
+    fixture,
+    label: apiLabel ?? selected?.label ?? null,
+    teacher_artifact: artifact,
+  };
+}
+
 /**
  * GET /teachers — the Teach UI exposes only the locked big teacher.
  * Never invent a live comma-master claim from silence.
+ * Prefer teacher_artifact when Craig cache is verified live.
  */
 export async function fetchTeachers(): Promise<TeacherInfo> {
   const raw = await jsonFetch<{
     teachers?: TeacherModel[];
     selected?: TeacherModel | null;
     source?: string | null;
+    label?: string | null;
+    teacher_artifact?: TeacherArtifact | null;
     count?: number;
   }>("/teachers");
-  const rawList = raw.teachers ?? [];
-  const list = rawList.filter(isBigTeacher);
-  // The API may still select the old stock model; never let that selection
-  // leak into Teach. Prefer a big entry from the filtered catalog instead.
-  const selected = isBigTeacher(raw.selected) ? raw.selected : list[0] ?? null;
-  const src = String(raw.source ?? raw.selected?.source ?? "");
-  const fixture =
-    src === "fixture" ||
-    raw.selected?.source === "fixture" ||
-    raw.selected?.live === false ||
-    rawList.some((m) => m.source === "fixture" || m.live === false);
-  const live =
-    !fixture &&
-    (selected?.live === true ||
-      raw.selected?.live === true ||
-      src.includes("openpilot") ||
-      src === "comma_master" ||
-      list.some((m) => m.live === true));
+  return normalizeTeachersPayload(raw);
+}
+
+/**
+ * POST /teachers/pull — start Craig teacher_pull job (big only).
+ * Progress streams on /ws/jobs/{id}. Does not wait for completion.
+ */
+export function startTeacherPullJob(opts?: {
+  force_download?: boolean;
+  force_fixture?: boolean;
+}): Promise<TeacherPullJobStart> {
+  return jsonFetch<TeacherPullJobStart>("/teachers/pull", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      force_download: opts?.force_download ?? false,
+      force_fixture: opts?.force_fixture ?? false,
+    }),
+  });
+}
+
+/**
+ * POST /teachers/pull + WS /ws/jobs/{id} until teach stage done/failed,
+ * then refresh GET /teachers for the chip (docs/teachers-pull-contract.json).
+ */
+export async function pullLiveTeacher(
+  opts?: {
+    force_download?: boolean;
+    force_fixture?: boolean;
+    onProgress?: TeacherPullProgressCb;
+    signal?: AbortSignal;
+  }
+): Promise<TeacherPullResult> {
+  const start = await startTeacherPullJob({
+    force_download: opts?.force_download,
+    force_fixture: opts?.force_fixture,
+  });
+  const jobId = start.id;
+  opts?.onProgress?.({
+    fraction: 0.02,
+    detail: start.label ?? `pulling · ${BIG_TEACHER_NAME}`,
+  });
+
+  let lastFrac = 0.02;
+  let lastDetail = start.label ?? `pulling · ${BIG_TEACHER_NAME}`;
+  let terminalLabel: string | null = null;
+  let terminalLive: boolean | null = null;
+  let terminalOk: boolean | null = null;
+  let warnMsg: string | null = null;
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const ws = new WebSocket(wsUrl(jobId));
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      try {
+        ws.close();
+      } catch {
+        /* */
+      }
+      reject(err);
+    };
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      try {
+        ws.close();
+      } catch {
+        /* */
+      }
+      resolve();
+    };
+
+    const onAbort = () => fail(new Error("Pull aborted"));
+    opts?.signal?.addEventListener("abort", onAbort);
+
+    const timer = window.setTimeout(() => {
+      fail(new Error("Teacher pull timed out"));
+    }, 180_000);
+
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      opts?.signal?.removeEventListener("abort", onAbort);
+    };
+
+    ws.onerror = () => {
+      cleanup();
+      fail(new Error("WebSocket error during teacher pull"));
+    };
+    ws.onclose = () => {
+      // If closed before stage done, try events poll fallback once
+      if (!settled) {
+        void (async () => {
+          try {
+            const events = await jsonFetch<
+              Array<{
+                kind?: string;
+                stage?: string | null;
+                payload?: Record<string, unknown>;
+              }>
+            >(`/jobs/${jobId}/events`);
+            for (const ev of events) {
+              if (ev.kind === "progress" && ev.stage === "teach") {
+                lastFrac = Number(ev.payload?.fraction ?? lastFrac);
+                lastDetail = String(ev.payload?.detail ?? lastDetail);
+              }
+              if (
+                ev.kind === "stage" &&
+                ev.stage === "teach" &&
+                (ev.payload?.status === "done" || ev.payload?.status === "failed")
+              ) {
+                terminalLabel = String(ev.payload?.detail ?? ev.payload?.label ?? terminalLabel ?? "");
+                if (typeof ev.payload?.live === "boolean") terminalLive = ev.payload.live;
+                if (typeof ev.payload?.ok === "boolean") terminalOk = ev.payload.ok;
+                cleanup();
+                done();
+                return;
+              }
+            }
+            cleanup();
+            fail(new Error("Teacher pull WS closed before done"));
+          } catch (e) {
+            cleanup();
+            fail(e instanceof Error ? e : new Error("Teacher pull failed"));
+          }
+        })();
+      }
+    };
+    ws.onmessage = (msg) => {
+      try {
+        const data = JSON.parse(String(msg.data)) as {
+          error?: string;
+          kind?: string;
+          stage?: string | null;
+          payload?: Record<string, unknown>;
+        };
+        if (data.error) {
+          cleanup();
+          fail(new Error(data.error));
+          return;
+        }
+        const kind = data.kind;
+        const stage = data.stage;
+        const payload = data.payload ?? {};
+        if (kind === "progress" && stage === "teach") {
+          lastFrac = Number(payload.fraction ?? lastFrac);
+          lastDetail = String(payload.detail ?? lastDetail);
+          opts?.onProgress?.({
+            fraction: lastFrac,
+            detail: lastDetail,
+            event: data as Record<string, unknown>,
+          });
+        }
+        if (kind === "warning" && stage === "teach") {
+          warnMsg = String(payload.label ?? payload.code ?? "TEACHER_NOT_LIVE");
+          if (typeof payload.label === "string") terminalLabel = payload.label;
+        }
+        if (kind === "decision" && stage === "teach") {
+          if (typeof payload.chosen === "string") terminalLabel = payload.chosen;
+          if (typeof payload.label === "string") terminalLabel = payload.label;
+          if (typeof payload.live === "boolean") terminalLive = payload.live;
+          if (typeof payload.ok === "boolean") terminalOk = payload.ok;
+        }
+        if (
+          kind === "stage" &&
+          stage === "teach" &&
+          (payload.status === "done" || payload.status === "failed")
+        ) {
+          if (typeof payload.detail === "string") terminalLabel = payload.detail;
+          if (typeof payload.label === "string") terminalLabel = payload.label;
+          if (typeof payload.live === "boolean") terminalLive = payload.live;
+          if (typeof payload.ok === "boolean") terminalOk = payload.ok;
+          if (payload.status === "failed") {
+            cleanup();
+            fail(new Error(String(payload.detail ?? "Teacher pull failed")));
+            return;
+          }
+          lastFrac = 1;
+          opts?.onProgress?.({ fraction: 1, detail: lastDetail, event: data as Record<string, unknown> });
+          cleanup();
+          done();
+        }
+      } catch {
+        /* ignore malformed */
+      }
+    };
+  });
+
+  // Contract: refresh chip from GET /teachers after done
+  const info = await fetchTeachers();
+  const live = info.live === true || terminalLive === true;
+  const label =
+    info.label ||
+    terminalLabel ||
+    (live
+      ? `comma master · ${BIG_TEACHER_NAME}`
+      : `fixture · ${BIG_TEACHER_NAME}`);
   return {
-    selected,
-    teachers: list,
-    status: fixture ? "fixture" : live ? "live" : "unknown",
-    source: fixture ? "fixture" : live ? "comma_master" : raw.source ?? null,
-    model_name: selected?.name ?? null,
-    model_version: selected?.version ?? null,
+    ...info,
     live,
-    fixture,
+    fixture: !live,
+    status: live ? "live" : "fixture",
+    source: live ? "comma_master" : "fixture",
+    label,
+    ok: terminalOk ?? live,
+    progress: { fraction: lastFrac, detail: lastDetail },
+    error: live ? null : warnMsg || info.teacher_artifact?.error || info.teacher_artifact?.detail || null,
+    jobId,
+    teacher_artifact: info.teacher_artifact,
   };
 }
 

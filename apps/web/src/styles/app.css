@@ -335,12 +335,19 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 
 /* Ingest pane */
+.pane.ingest .pane-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* route-list scrolls; do not clip under SSH/actions */
+  min-height: 0;
+}
 .ingest-pane {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-  height: 100%;
+  flex: 1;
   min-height: 0;
+  height: 100%;
 }
 .ingest-head {
   display: flex;
@@ -480,9 +487,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 
 .route-list {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 5rem;
+  max-height: min(42vh, 20rem);
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
@@ -490,6 +499,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   border-radius: 8px;
   padding: 0.35rem;
   background: rgba(0, 0, 0, 0.18);
+  /* Keep all N routes selectable — never clip under SSH form / actions */
 }
 .route-row {
   text-align: left;
@@ -990,6 +1000,32 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .tile.pass .tile-mark { color: var(--accent-dim); }
 .tile.fail .tile-mark { color: var(--danger); }
+
+/* Teacher pull live — one calm primary control */
+.teacher-pull {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.15rem 0 0.45rem;
+}
+.teacher-pull-btn {
+  align-self: flex-start;
+  min-width: 9.5rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+}
+.teacher-pull-note {
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+.teacher-pull-note.is-error { color: var(--danger); }
+.teacher-pull-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.teacher-pull-progress .bar-track { height: 4px; }
 
 /* Teacher identity — comma master · big_driving_supercombo / fixture */
 .teacher-identity {

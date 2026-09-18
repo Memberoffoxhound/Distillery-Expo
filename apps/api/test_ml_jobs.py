@@ -156,3 +156,95 @@ def test_health_reports_ml_backends(client):
     assert r.status_code == 200
     backends = r.json()["ml_backends"]
     assert set(backends) >= {"teach", "train", "export", "eval", "flash"}
+
+
+def test_flash_confirm_no_ssh_honest_no_write(client, monkeypatch):
+    """eval_passed + confirm without MICI_SSH_HOST → device_write=false, live=false."""
+    from api import ml_adapters
+    from api import main as api_main
+
+    monkeypatch.setattr(ml_adapters, "resolve_eval", lambda: ml_adapters._fixture_eval)
+    monkeypatch.setattr(api_main, "resolve_eval", lambda: ml_adapters._fixture_eval)
+    monkeypatch.delenv("MICI_SSH_HOST", raising=False)
+    monkeypatch.delenv("COMMA_SSH_HOST", raising=False)
+
+    # Prefer real deploy package if installed
+    from distillery_deploy import run_flash_pipeline
+
+    monkeypatch.setattr(ml_adapters, "resolve_flash", lambda: run_flash_pipeline)
+    monkeypatch.setattr(api_main, "resolve_flash", lambda: run_flash_pipeline)
+
+    r = client.post("/jobs/eval", json={"force_pass": True})
+    job_id = r.json()["id"]
+    body, _ = _wait_done(client, job_id)
+    assert body["eval_passed"] is True
+
+    ok = client.post(f"/jobs/{job_id}/flash/confirm", json={"confirm": True})
+    assert ok.status_code == 200
+    data = ok.json()
+    assert data["ok"] is True
+    assert data["device_write"] is False
+    assert data.get("live") is False
+    events = client.get(f"/jobs/{job_id}/events").json()
+    assert events.get("device_write") is False
+    blob = str(events["events"]).lower()
+    assert "flash" in blob
+    assert "live=false" in blob or "ssh" in blob
+
+
+def test_flash_confirm_mocked_ssh_sets_device_write(client, monkeypatch, tmp_path):
+    """eval_passed + confirm + mocked scp → device_write=true."""
+    from types import SimpleNamespace
+    from dataclasses import replace
+
+    from api import ml_adapters
+    from api import main as api_main
+    from distillery_deploy import run_flash_pipeline, load_deploy_config
+    from distillery_deploy.config import DEFAULT_MODEL_PATH
+
+    monkeypatch.setattr(ml_adapters, "resolve_eval", lambda: ml_adapters._fixture_eval)
+    monkeypatch.setattr(api_main, "resolve_eval", lambda: ml_adapters._fixture_eval)
+
+    art = tmp_path / "driving_supercombo.onnx"
+    art.write_bytes(b"fake-onnx")
+
+    cfg = replace(
+        load_deploy_config(),
+        ssh_host="mici.test",
+        ssh_user="comma",
+        remote_model_path=DEFAULT_MODEL_PATH,
+        export_dir=tmp_path,
+    )
+
+    def fake_scp(cmd, **kwargs):
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    async def flash_runner(job_id, emit, **kwargs):
+        return await run_flash_pipeline(
+            job_id,
+            emit,
+            confirmed=kwargs.get("confirmed", False),
+            eval_passed=kwargs.get("eval_passed", False),
+            onnx_path=str(art),
+            cfg=cfg,
+            tick=0.0,
+            scp_runner=fake_scp,
+        )
+
+    monkeypatch.setattr(ml_adapters, "resolve_flash", lambda: flash_runner)
+    monkeypatch.setattr(api_main, "resolve_flash", lambda: flash_runner)
+
+    r = client.post("/jobs/eval", json={"force_pass": True})
+    job_id = r.json()["id"]
+    body, _ = _wait_done(client, job_id)
+    assert body["eval_passed"] is True
+
+    ok = client.post(f"/jobs/{job_id}/flash/confirm", json={"confirm": True})
+    assert ok.status_code == 200
+    data = ok.json()
+    assert data["ok"] is True
+    assert data["device_write"] is True
+    assert data.get("live") is True
+    assert str(data.get("remote_path", "")).endswith("driving_supercombo.onnx")
+    events = client.get(f"/jobs/{job_id}/events").json()
+    assert events.get("device_write") is True

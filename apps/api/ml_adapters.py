@@ -447,9 +447,9 @@ async def _fixture_export(
             stage=stage,
         ),
     )
-    onnx_dir = _REPO_ROOT / "artifacts" / "onnx"
+    onnx_dir = _REPO_ROOT / "artifacts" / "export"
     onnx_dir.mkdir(parents=True, exist_ok=True)
-    onnx_path = onnx_dir / "student_modelV2_io.onnx"
+    onnx_path = onnx_dir / "driving_supercombo.onnx"
     for i, detail in enumerate(["trace graph", "fold BN", "validate I/O", "write artifact"], 1):
         await _emit(
             emit,

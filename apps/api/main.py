@@ -61,6 +61,8 @@ class JobRecord(BaseModel):
     created_at: str
     events: list[dict[str, Any]] = Field(default_factory=list)
     flash_confirmed: bool = False
+    flash_done: bool = False
+    device_write: bool = False
     route_id: str | None = None
     eval_passed: bool = False
     onnx_path: str | None = None
@@ -649,11 +651,32 @@ async def _run_pipeline_job(
         )
 
         confirmed = await _wait_flash(job_id)
-        # Pipeline never auto-writes on timeout without confirm flag
+        # Pipeline never auto-writes on timeout without confirm flag.
+        # Confirm endpoint may have already run deploy (flash_done).
         if confirmed and job.flash_confirmed:
-            await _call_stage(resolve_flash(), job_id, emit, confirmed=True, tick=0.06)
+            if not job.flash_done:
+                result = await _call_stage(
+                    resolve_flash(),
+                    job_id,
+                    emit,
+                    confirmed=True,
+                    eval_passed=job.eval_passed,
+                    onnx_path=job.onnx_path,
+                    tick=0.06,
+                )
+                if isinstance(result, dict):
+                    job.device_write = bool(result.get("device_write"))
+                    job.flash_done = True
         else:
-            await _call_stage(resolve_flash(), job_id, emit, confirmed=False, tick=0.0)
+            await _call_stage(
+                resolve_flash(),
+                job_id,
+                emit,
+                confirmed=False,
+                eval_passed=job.eval_passed,
+                onnx_path=job.onnx_path,
+                tick=0.0,
+            )
         if job.status not in ("done", "failed"):
             job.status = "done"
     except Exception as exc:  # noqa: BLE001
@@ -946,6 +969,8 @@ async def get_events(job_id: str) -> dict[str, Any]:
         "eval_passed": job.eval_passed,
         "onnx_path": job.onnx_path,
         "flash_confirmed": job.flash_confirmed,
+        "flash_done": job.flash_done,
+        "device_write": job.device_write,
     }
 
 
@@ -955,7 +980,11 @@ class FlashConfirm(BaseModel):
 
 @app.post("/jobs/{job_id}/flash/confirm")
 async def confirm_flash(job_id: str, body: FlashConfirm) -> dict[str, Any]:
-    """Explicit confirm only. Rejected unless this job reported eval_passed."""
+    """Explicit confirm only. Rejected unless this job reported eval_passed.
+
+    After gates: run distillery_deploy SSH push of driving_supercombo.onnx.
+    device_write=True only on real successful scp — never pretend.
+    """
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(404, "job not found")
@@ -975,13 +1004,47 @@ async def confirm_flash(job_id: str, body: FlashConfirm) -> dict[str, Any]:
     job.flash_confirmed = True
     ev = _flash_events.setdefault(job_id, asyncio.Event())
     ev.set()
+
+    async def emit(event: dict[str, Any]) -> None:
+        await _broadcast(job_id, event)
+
+    result = await _call_stage(
+        resolve_flash(),
+        job_id,
+        emit,
+        confirmed=True,
+        eval_passed=True,
+        onnx_path=job.onnx_path,
+        tick=0.0,
+    )
+    device_write = False
+    live = False
+    detail = ""
+    remote_path = None
+    if isinstance(result, dict):
+        device_write = bool(result.get("device_write"))
+        live = bool(result.get("live"))
+        detail = str(result.get("detail") or result.get("reason") or "")
+        remote_path = result.get("remote_path")
+    job.device_write = device_write
+    job.flash_done = True
+    if job.status not in ("failed",):
+        job.status = "done"
+
     return {
         "ok": True,
         "job_id": job_id,
         "flash_confirmed": True,
         "eval_passed": True,
-        "device_write": False,
-        "note": "Confirm accepted; flash path is simulated unless a live deploy backend is wired",
+        "device_write": device_write,
+        "live": live,
+        "remote_path": remote_path,
+        "detail": detail,
+        "note": (
+            "Device write succeeded via SSH"
+            if device_write
+            else "Confirm accepted; no device write (SSH missing, scp failed, or artifact absent) — live=false"
+        ),
     }
 
 

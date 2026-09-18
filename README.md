@@ -82,7 +82,9 @@ Env for live device paths:
 |-----|---------|
 | `COMMA_JWT` / `CONNECT_JWT` | comma Connect auth |
 | `MICI_SSH_HOST` | mici SSH host |
+| `MICI_SSH_USER` | SSH user (default `comma`) |
 | `MICI_SSH_KEY` | optional SSH key |
+| `MICI_MODEL_PATH` | remote ONNX path (default `/data/openpilot/selfdrive/modeld/models/driving_supercombo.onnx`) |
 | `DISTILLERY_INGEST_FIXTURE=1` | force offline fixture |
 
 ## Layout
@@ -113,7 +115,7 @@ Expo primary. One-command: `./scripts/dev-up` then use Expo or:
 | `POST` | `/jobs/export` | ONNX path in logs/metrics (`stage=export`) |
 | `POST` | `/jobs/eval` | Real scorecard metrics; `eval_passed` defaults **false** for fixture |
 | `POST` | `/jobs/pipeline` | Sequential teach→…→eval→**gated** flash |
-| `POST` | `/jobs/{id}/flash/confirm` | **403** unless `eval_passed`; never auto-writes device |
+| `POST` | `/jobs/{id}/flash/confirm` | **403** unless `eval_passed`; SSH push `driving_supercombo.onnx`; `device_write` only on real scp |
 
 Flash stays locked until eval clears **and** operator confirms. Fixture/offline paths are labeled `live=false` — no greenwashed pass.
 

@@ -948,6 +948,32 @@ async def _run_teacher_pull_job(
         await progress_q.put(None)
         await drain_task
 
+        # Graig consume: checksum-verify artifacts/teachers cache after pull.
+        # Success → live label; fail/offline → labeled fixture (never small model).
+        from distillery_teacher.consume import consume_big_teacher_for_teach
+
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "progress",
+                "stage": "teach",
+                "payload": {
+                    "fraction": 0.92,
+                    "detail": f"verify checksum · {BIG_TEACHER_NAME}",
+                    "teacher": BIG_TEACHER_NAME,
+                },
+            },
+        )
+        consumed = await asyncio.to_thread(
+            consume_big_teacher_for_teach,
+            force_fixture=force_fixture or not art.live,
+        )
+        # Consume is source of truth for teach label (checksum → live or fixture).
+        art = consumed
+
         art_dict = art.as_dict()
         level = "info" if art.live else "warn"
         await _broadcast(
@@ -1033,6 +1059,8 @@ async def _run_teacher_pull_job(
                     "ok": art.ok,
                     "label": art.label,
                     "sha256": art.sha256,
+                    "consumed": True,
+                    "path": str(art.path) if art.path else None,
                 },
             },
         )

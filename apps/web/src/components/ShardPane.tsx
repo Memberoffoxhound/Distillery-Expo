@@ -51,6 +51,55 @@ function latestStageStatus(
   return hit;
 }
 
+
+function latestShardSamples(events: DistilleryEvent[]): {
+  shard_id?: string;
+  route_id?: string;
+  frame_count?: number;
+  size_bytes?: number;
+  status?: string;
+  fixture?: boolean;
+  label?: string;
+}[] {
+  const out: {
+    shard_id?: string;
+    route_id?: string;
+    frame_count?: number;
+    size_bytes?: number;
+    status?: string;
+    fixture?: boolean;
+    label?: string;
+  }[] = [];
+  const seen = new Set<string>();
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]!;
+    if (ev.kind !== "sample" || ev.stage !== "shard") continue;
+    const meta = (ev.payload.meta as Record<string, unknown> | undefined) ?? {};
+    const shard_id =
+      typeof meta.shard_id === "string"
+        ? meta.shard_id
+        : typeof ev.payload.label === "string"
+          ? String(ev.payload.label).split("·")[0]?.trim()
+          : undefined;
+    const key = shard_id ?? `idx-${i}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      shard_id,
+      route_id: typeof meta.route_id === "string" ? meta.route_id : undefined,
+      frame_count:
+        typeof meta.frame_count === "number" ? meta.frame_count : undefined,
+      size_bytes:
+        typeof meta.size_bytes === "number" ? meta.size_bytes : undefined,
+      status: typeof meta.status === "string" ? meta.status : undefined,
+      fixture: Boolean(meta.fixture),
+      label: typeof ev.payload.label === "string" ? ev.payload.label : undefined,
+    });
+    if (out.length >= 6) break;
+  }
+  return out.reverse();
+}
+
 function latestShardDecision(events: DistilleryEvent[]): {
   title: string;
   chosen?: string;
@@ -81,6 +130,7 @@ export function ShardPane({ events }: { events: DistilleryEvent[] }) {
   const { fraction, detail } = progressOf(events, "shard");
   const stage = latestStageStatus(events, "shard");
   const decision = latestShardDecision(events);
+  const samples = latestShardSamples(events);
 
   const hasShardSignal =
     Boolean(stage) ||
@@ -88,7 +138,10 @@ export function ShardPane({ events }: { events: DistilleryEvent[] }) {
     events.some(
       (e) =>
         e.stage === "shard" &&
-        (e.kind === "progress" || e.kind === "log" || e.kind === "decision")
+        (e.kind === "progress" ||
+          e.kind === "log" ||
+          e.kind === "decision" ||
+          e.kind === "sample")
     );
 
   const ingestDone = events.some(
@@ -184,6 +237,30 @@ export function ShardPane({ events }: { events: DistilleryEvent[] }) {
                     : "—")}
             </span>
           </div>
+        </div>
+      )}
+
+
+      {samples.length > 0 && (
+        <div className="shard-samples">
+          {samples.map((s, i) => (
+            <div key={s.shard_id ?? i} className="shard-sample">
+              <div className="shard-sample-id mono">
+                {s.shard_id ?? s.label ?? "shard"}
+                {s.fixture ? <span className="tag">fixture</span> : null}
+              </div>
+              <div className="muted">
+                {[
+                  s.route_id ? `route ${s.route_id}` : null,
+                  s.frame_count != null ? `${s.frame_count}f` : null,
+                  s.size_bytes != null ? `${s.size_bytes} B` : null,
+                  s.status ?? null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

@@ -111,7 +111,7 @@ function connectionState(
         label: "Offline",
         tone: "offline",
         detail:
-          "No ADB or SSH path yet. Craig’s lan_scan / adb_available will unlock this — fixture stays available.",
+          "No ADB or SSH path yet — install adb / set MICI_SSH_HOST, or use fixture.",
       };
     }
     return {
@@ -212,7 +212,12 @@ export function IngestPane({
             ? "needs_jwt"
             : "offline",
         adb_available: Boolean(adb.adb_available ?? overview?.devices?.adb_available),
-        adb_status: (adb.devices ?? []).length > 0 ? "found" : "missing",
+        adb_status: (() => {
+          const avail = Boolean(adb.adb_available ?? overview?.devices?.adb_available);
+          const n = (adb.devices ?? []).length;
+          if (!avail) return "not_on_path";
+          return n > 0 ? "found" : "ready";
+        })(),
         devices: adbDevices.map((x) => ({
           id: x.id,
           name: x.model ?? x.name ?? x.id,
@@ -352,11 +357,22 @@ export function IngestPane({
                     ? "ok"
                     : "off"
                 }
-                title={
-                  dongle.adb_available === true
-                    ? "ADB on LAN available"
-                    : "ADB discovery pending (Craig)"
-                }
+                title={(() => {
+                  const n = (dongle.devices ?? []).filter(
+                    (d) => (d.kind ?? "adb") === "adb" || !d.kind
+                  ).length;
+                  const st = (dongle.adb_status ?? "").toLowerCase();
+                  if (dongle.adb_available === true) {
+                    if (n > 0 || st === "found" || st === "ready") {
+                      return n > 0 ? `ADB ready · ${n} device${n === 1 ? "" : "s"}` : "ADB ready · 0 devices";
+                    }
+                    return "ADB ready · 0 devices";
+                  }
+                  if (st === "missing" || st === "not_on_path" || st === "error") {
+                    return "adb not on PATH";
+                  }
+                  return "adb not on PATH";
+                })()}
               >
                 ADB
               </span>

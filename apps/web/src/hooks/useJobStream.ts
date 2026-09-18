@@ -5,6 +5,7 @@ import {
   startDemoJob,
   startIngestJob,
   startShardJob,
+  startPipelineJob,
   wsUrl,
   type RouteSource,
 } from "../lib/api";
@@ -24,7 +25,7 @@ export interface StageTiming {
 
 export interface JobState {
   jobId: string | null;
-  jobKind: "demo" | "ingest" | "shard" | null;
+  jobKind: "demo" | "ingest" | "shard" | "pipeline" | "teach" | "train" | "export" | "eval" | null;
   status: string;
   events: DistilleryEvent[];
   stageStatus: Record<StageName, StageStatus>;
@@ -183,7 +184,7 @@ export function useJobStream() {
 
   const beginJob = useCallback(
     async (
-      kind: "demo" | "ingest" | "shard",
+      kind: "demo" | "ingest" | "shard" | "pipeline" | "teach" | "train" | "export" | "eval",
       starter: () => Promise<{ id: string; status?: string }>
     ) => {
       seen.current = new Set();
@@ -243,6 +244,19 @@ export function useJobStream() {
     [beginJob]
   );
 
+  const startPipeline = useCallback(
+    async (opts?: { source?: RouteSource; routeId?: string | null }) => {
+      await beginJob("pipeline", () =>
+        startPipelineJob({
+          source: opts?.source ?? "fixture",
+          route_id: opts?.routeId ?? null,
+          include_flash: true,
+        })
+      );
+    },
+    [beginJob]
+  );
+
   const confirmFlash = useCallback(async () => {
     const jobId = jobIdRef.current ?? state.jobId;
     if (!jobId) return;
@@ -263,6 +277,7 @@ export function useJobStream() {
     startDemo,
     startIngest,
     startShard,
+    startPipeline,
     confirmFlash,
     apiBase: apiBase(),
   };

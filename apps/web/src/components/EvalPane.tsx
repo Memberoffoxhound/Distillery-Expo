@@ -6,6 +6,8 @@ import {
   latestStageStatus,
   progressOf,
   pct,
+  readEvalPassed,
+  readLiveFlag,
   stageDone,
   stageRunning,
 } from "../lib/eventSelectors";
@@ -50,7 +52,9 @@ export function EvalPane({ events }: { events: DistilleryEvent[] }) {
   const stage = latestStageStatus(events, "eval");
   const decision = latestDecision(events, "eval");
   const signal = hasStageSignal(events, "eval");
-  const fixture = isFixtureOrOffline(events);
+  const evalPassed = readEvalPassed(events);
+  const live = readLiveFlag(events);
+  const fixture = live === false || isFixtureOrOffline(events);
 
   const exportDone = stageDone(events, "export");
   const exportRunning = stageRunning(events, "export");
@@ -90,8 +94,8 @@ export function EvalPane({ events }: { events: DistilleryEvent[] }) {
   const statusLabel =
     status === "done"
       ? fixture
-        ? "fixture"
-        : allPass
+        ? "live=false"
+        : evalPassed
           ? "cleared"
           : "hold"
       : status === "failed"
@@ -134,15 +138,15 @@ export function EvalPane({ events }: { events: DistilleryEvent[] }) {
         )}
       </div>
 
-      {(fixture || (evals.length > 0 && !allPass) || status === "done") && (
-        <div className={`license-banner ${fixture || !allPass ? "hold" : "ok"}`}>
+      {(signal || evals.length > 0) && (
+        <div className={`license-banner ${evalPassed && !fixture ? "ok" : "hold"}`}>
+          {`eval_passed=${evalPassed} · live=${live === null ? "unknown" : live}`}
+          {" — "}
           {fixture
-            ? "Not licensed yet — fixture / offline path (live=false). Looks ready ≠ road ready."
-            : !allPass && evals.length > 0
-              ? "Not licensed yet — scorecard hold. Do not treat this student as road-ready."
-              : allPass
-                ? "Gate numbers cleared — still requires your flash confirm. Never auto-write to mici."
-                : "Not licensed yet — waiting on complete scorecard numbers."}
+            ? "fixture/offline (live=false). Looks ready ≠ road ready."
+            : !evalPassed
+              ? "not licensed yet — defaults closed until thresholds clear."
+              : "numbers cleared — flash still needs your confirm. Never auto-write."}
         </div>
       )}
 

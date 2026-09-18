@@ -22,3 +22,11 @@ batches = await run_teach_pipeline(job_id, emit, prefer="auto", tick=0.0)
 - Force fixture: `DISTILLERY_TEACHER_FIXTURE=1` or `prefer="fixture"`.
 
 Artifacts land under `artifacts/soft_labels/`.
+
+## Teacher artifact consume (big only)
+
+Craig fetch/cache writes `artifacts/teachers/big_driving_supercombo.onnx` + `.sha256`.
+Graig `consume_big_teacher_for_teach` verifies checksum before soft-labels.
+
+- Missing / checksum fail → labeled fixture (`live=false` / not licensed)
+- **Never** `driving_supercombo` fallback. No Chestnut.

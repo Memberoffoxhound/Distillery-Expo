@@ -20,6 +20,7 @@ from distillery_events import (
 )
 from distillery_teacher.config import TeacherConfig, load_teacher_config
 from distillery_teacher.device import TeacherDeviceInfo, detect_teacher_device
+from distillery_teacher.consume import consume_big_teacher_for_teach
 from distillery_teacher.download import BIG_TEACHER_NAME, ensure_big_teacher_onnx
 from distillery_teacher.fixture import build_fixture_batches, write_soft_label_artifacts
 from distillery_teacher.models import SoftLabelBatch
@@ -178,6 +179,32 @@ async def run_teach_pipeline(
         f"teacher artifact: label={art.label} live={art.live} cached={art.cached} "
         f"path={art.path} ok={art.ok}"
         + (f" error={art.error}" if art.error else "")
+    )
+    # Graig consume: re-verify Craig cache checksum before soft-label use
+    consumed = await asyncio.to_thread(
+        consume_big_teacher_for_teach,
+        force_fixture=force_fixture or not art.live,
+    )
+    if consumed.error:
+        await _emit(
+            emit,
+            make_event(
+                job_id,
+                EventKind.warning,
+                WarningPayload(
+                    code="TEACHER_CHECKSUM_FAIL",
+                    message=consumed.error,
+                    recoverable=True,
+                ),
+                stage=stage,
+            ),
+        )
+        art = consumed
+    elif not consumed.live:
+        art = consumed
+    await log(
+        f"teacher consume: label={art.label} live={art.live} "
+        f"source={art.source} path={art.path}"
     )
     if not art.live:
         await _emit(

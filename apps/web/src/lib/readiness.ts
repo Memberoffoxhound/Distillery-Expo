@@ -5,6 +5,7 @@
 
 import {
   fetchReady,
+  BIG_TEACHER_NAME,
   fetchTeachers,
   formatTeacherLabel,
   type ReadyGap,
@@ -62,7 +63,7 @@ const GAP_META: Record<
   teacher_not_selected: {
     id: "teacher",
     label: "Teacher",
-    ask: "Select comma-master teacher (GET /teachers). No Chestnut.",
+    ask: `Select comma master · ${BIG_TEACHER_NAME} (GET /teachers). No Chestnut.`,
   },
   mici_not_found: {
     id: "mici_lan",
@@ -93,7 +94,10 @@ function gapToCheck(gap: ReadyGap): ReadinessCheck {
     id: meta.id,
     label: meta.label,
     status,
-    detail: gap.message,
+    detail:
+      gap.code === "teacher_not_selected"
+        ? `Teacher target is comma master · ${BIG_TEACHER_NAME}; select it before training.`
+        : gap.message,
     ask: meta.ask,
     code: gap.code,
   };
@@ -108,7 +112,7 @@ function okCheck(
 }
 
 /**
- * Live readiness from GET /ready (+ teacher label from GET /teachers).
+ * Live readiness from GET /ready (+ locked big teacher label from GET /teachers).
  */
 export async function checkReadiness(opts?: {
   force_fixture?: boolean;
@@ -195,8 +199,8 @@ export async function checkReadiness(opts?: {
         tLabel.primary !== "Teacher · unknown"
           ? tLabel.primary
           : fromReady?.name
-            ? `${fromReady.source === "fixture" ? "fixture" : "comma master"} · ${fromReady.name}`
-            : "Teacher selected"
+            ? `${fromReady.source === "fixture" ? "fixture" : "comma master"} · ${BIG_TEACHER_NAME}`
+            : `Teacher target: comma master · ${BIG_TEACHER_NAME}`
       )
     );
   }

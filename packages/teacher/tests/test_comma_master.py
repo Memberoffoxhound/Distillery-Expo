@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from distillery_teacher import list_comma_master_teachers, select_comma_master_teacher
+from distillery_teacher.download import BIG_TEACHER_NAME
 
 
 def test_list_force_fixture_labeled():

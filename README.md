@@ -110,6 +110,32 @@ Env for live device paths:
 | `MICI_MODEL_PATH` | remote ONNX path (default `/data/openpilot/selfdrive/modeld/models/driving_supercombo.onnx`) |
 | `DISTILLERY_INGEST_FIXTURE=1` | force offline fixture |
 
+## ML train readiness (Phil / Bruce)
+
+Train refuses below **50 hours** of driving data unless `DISTILLERY_ALLOW_TOY_TRAIN=1`
+(or `student.allow_toy_train` in config) for fixture CI — still `live=false` / not licensed.
+Eval forces `eval_passed=false` with `fail_reason=insufficient_hours` on the same floor
+when toy is not allowed.
+
+Craig import paths (no API wiring required):
+
+```python
+from distillery_student import (
+    probe_train_device,          # /health-friendly sync dict
+    check_train_readiness,       # train_all gaps: hours / device / teacher
+    estimate_driving_hours,
+)
+from distillery_teacher import (
+    list_comma_master_teachers,  # openpilot master stock/big supercombo
+    select_comma_master_teacher,
+)
+```
+
+`probe_train_device()` → `{device_found, device_ready, device_kind, device_name, tinygrad}`
+(`tinygrad` ∈ ok|missing|fixture; not 7090-locked).
+
+`list_comma_master_teachers()` offline → `source=fixture` teachers (no Chestnut).
+
 ## Layout
 
 ```

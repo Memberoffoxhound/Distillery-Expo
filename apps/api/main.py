@@ -13,17 +13,26 @@ from pydantic import BaseModel, Field
 
 from api.demo_runner import STAGES, run_demo_pipeline
 from api.ml_adapters import (
-    backend_status,
     coerce_eval_passed,
     resolve_eval,
     resolve_export,
     resolve_flash,
     resolve_teach,
     resolve_train,
+    runtime_status,
 )
 from distillery_ingest import load_ingest_config, run_ingest_pipeline
+from distillery_ingest.discover import (
+    apply_discovered_overrides,
+    connect_status,
+    discovery_overview,
+    list_adb_devices,
+    set_connect_jwt,
+)
 from distillery_ingest.resolve import list_routes as ingest_list_routes
 from distillery_shards import run_shard_pipeline
+from distillery_student import check_train_readiness, probe_train_device
+from distillery_teacher import list_comma_master_teachers, select_comma_master_teacher
 
 import inspect
 
@@ -41,7 +50,7 @@ async def _call_stage(runner, job_id: str, emit, **kwargs):
 
 app = FastAPI(
     title="Distillery Expo API",
-    version="0.4.0",
+    version="0.4.1",
     description="tinygrad distill control room — teach→train→export→eval + gated flash",
 )
 
@@ -115,6 +124,21 @@ class PipelineJobRequest(BaseModel):
     route_id: str | None = None
     source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
     include_flash: bool = True
+
+
+class TrainAllRequest(BaseModel):
+    """One-click ingest→shard→teach→train→export→eval (never auto-flash)."""
+    route_id: str | None = None
+    source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
+    teacher: str | None = None
+    allow_toy: bool = False
+    force_fixture: bool = False
+
+
+class ConnectJwtRequest(BaseModel):
+    """Set comma Connect JWT without shell/env archaeology."""
+    jwt: str = Field(..., min_length=1)
+    persist: bool = True
 
 
 # In-memory job store
@@ -698,13 +722,106 @@ async def _run_pipeline_job(
         )
 
 
+
+async def _run_train_all_job(
+    job_id: str,
+    *,
+    route_id: str | None = None,
+    prefer: str = "auto",
+) -> None:
+    """ingest → shard → teach → train → export → eval. Never flashes."""
+    job = _jobs[job_id]
+    job.status = "running"
+
+    async def emit(event: dict[str, Any]) -> None:
+        await _broadcast(job_id, event)
+
+    try:
+        prefer_ml = prefer if prefer in ("auto", "live", "fixture") else "auto"
+        # Ingest
+        route = await run_ingest_pipeline(
+            job_id,
+            emit,
+            route_id=route_id,
+            prefer=prefer,  # type: ignore[arg-type]
+            tick=0.08,
+        )
+        rid = getattr(route, "route_id", None) or route_id
+        if rid:
+            job.route_id = str(rid)
+        # Shard
+        await run_shard_pipeline(
+            job_id,
+            emit,
+            route_id=rid,
+            prefer=prefer,  # type: ignore[arg-type]
+            tick=0.08,
+        )
+        await _call_stage(
+            resolve_teach(), job_id, emit, route_id=rid, prefer=prefer_ml, tick=0.06
+        )
+        await _call_stage(
+            resolve_train(), job_id, emit, route_id=rid, prefer=prefer_ml, tick=0.06
+        )
+        export_result = await _call_stage(
+            resolve_export(), job_id, emit, route_id=rid, tick=0.06
+        )
+        onnx = getattr(export_result, "onnx_path", None)
+        if isinstance(export_result, dict):
+            onnx = export_result.get("onnx_path", onnx)
+        if onnx:
+            job.onnx_path = str(onnx)
+        eval_result = await _call_stage(
+            resolve_eval(),
+            job_id,
+            emit,
+            route_id=rid,
+            onnx_path=job.onnx_path,
+            tick=0.06,
+        )
+        job.eval_passed = coerce_eval_passed(eval_result)
+        if job.status not in ("done", "failed", "gated"):
+            job.status = "done"
+    except Exception as exc:  # noqa: BLE001
+        job.status = "failed"
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "log",
+                "stage": None,
+                "payload": {
+                    "level": "error",
+                    "message": f"train_all failed: {exc}",
+                    "source": "api",
+                },
+            },
+        )
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
+    """Liveness + tinygrad-compatible device status (GPU or CPU; not 7090-locked)."""
+    rt = runtime_status()
     return {
+        "ok": True,
         "status": "ok",
         "service": "distillery-expo",
-        "ml_backends": backend_status(),
+        "tinygrad": rt["tinygrad"],
+        "device": rt["device"],
+        "mode": rt["mode"],
+        "ml_backends": rt["ml_backends"],
+        "probe": rt.get("probe"),
+        "detail": rt.get("detail"),
     }
+
+
+@app.get("/status/runtime")
+async def status_runtime() -> dict[str, Any]:
+    """Explicit runtime/device probe for Expo status chips."""
+    return runtime_status()
 
 
 @app.get("/stages")
@@ -724,17 +841,195 @@ async def get_dongle() -> dict[str, Any]:
     }
 
 
+@app.get("/discover")
+async def discover_all() -> dict[str, Any]:
+    """Combined discovery snapshot: ADB devices + Connect + SSH + fixture label."""
+    return discovery_overview()
+
+
+@app.get("/discover/devices")
+async def discover_devices() -> dict[str, Any]:
+    """LAN/USB ADB device list for the Expo picker (`adb devices -l`)."""
+    return list_adb_devices()
+
+
+@app.get("/discover/connect")
+async def discover_connect_get() -> dict[str, Any]:
+    """comma Connect status (JWT configured? masked) — no shell docs required."""
+    return connect_status()
+
+
+@app.post("/discover/connect")
+async def discover_connect_set(body: ConnectJwtRequest) -> dict[str, Any]:
+    """Set/use Connect JWT (process env + optional .cache/connect_jwt; not committed)."""
+    try:
+        return set_connect_jwt(body.jwt, persist=body.persist)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+
+
+@app.get("/teachers")
+async def get_teachers(
+    force_fixture: bool = Query(False),
+) -> dict[str, Any]:
+    """List commaai/openpilot@master stock teachers (fixture-labeled when offline)."""
+    teachers = list_comma_master_teachers(force_fixture=force_fixture)
+    selected = select_comma_master_teacher(force_fixture=force_fixture)
+    return {
+        "teachers": teachers,
+        "selected": selected,
+        "count": len(teachers),
+        "source": (selected or {}).get("source") or ("fixture" if force_fixture else "commaai/openpilot@master"),
+    }
+
+
+@app.get("/ready")
+async def get_ready(
+    teacher: str | None = Query(None),
+    allow_toy: bool = Query(False),
+    force_fixture: bool = Query(False),
+) -> dict[str, Any]:
+    """Structured train-all readiness gaps (mici/connect/hours/tinygrad/teacher)."""
+    # Enrich Graig gaps with mici/connect when discover is available
+    report = check_train_readiness(
+        teacher_name=teacher,
+        allow_toy=allow_toy,
+        force_fixture=force_fixture,
+    )
+    extra: list[dict[str, str]] = []
+    try:
+        adb = list_adb_devices()
+        devices = adb.get("devices") or []
+        online = [
+            d for d in devices
+            if str(d.get("state") or d.get("status") or "").lower() == "device"
+        ]
+        ssh = ssh_status() if "ssh_status" in dir() else None
+        try:
+            from distillery_ingest.discover import ssh_status as _ssh_status
+            ssh = _ssh_status()
+        except Exception:
+            ssh = {"configured": False}
+        mici_ok = bool(online) or bool(ssh.get("configured") or ssh.get("available") or ssh.get("host"))
+        if not mici_ok and not (allow_toy or force_fixture):
+            extra.append(
+                {
+                    "code": "mici_not_found",
+                    "message": "No ADB mici device and no SSH host — connect mici on LAN/USB",
+                }
+            )
+        conn = connect_status()
+        if not (conn.get("configured") or conn.get("available")) and not (allow_toy or force_fixture):
+            extra.append(
+                {
+                    "code": "connect_not_configured",
+                    "message": "Connect JWT not configured — POST /discover/connect or use fixture",
+                }
+            )
+    except Exception as exc:  # noqa: BLE001
+        extra.append({"code": "discover_error", "message": str(exc)[:200]})
+
+    gaps = list(report.get("gaps") or []) + extra
+    ok = len(gaps) == 0
+    return {
+        "ok": ok,
+        "ready": ok,
+        "gaps": gaps,
+        "hours": report.get("hours"),
+        "hours_gate": report.get("hours_gate"),
+        "device": report.get("device"),
+        "teacher": report.get("teacher"),
+        "min_train_hours": report.get("min_train_hours"),
+        "allow_toy": report.get("allow_toy"),
+        "force_fixture": force_fixture,
+        "probe": probe_train_device(force_fixture=force_fixture),
+        "live": False,
+        "licensed": False,
+    }
+
+
+@app.get("/jobs/train_all/ready")
+async def get_train_all_ready(
+    teacher: str | None = Query(None),
+    allow_toy: bool = Query(False),
+    force_fixture: bool = Query(False),
+) -> dict[str, Any]:
+    """Alias of GET /ready for Expo Start-training binding."""
+    return await get_ready(teacher=teacher, allow_toy=allow_toy, force_fixture=force_fixture)
+
+
+@app.post("/jobs/train_all", response_model=JobSummary)
+async def start_train_all(
+    background_tasks: BackgroundTasks,
+    body: TrainAllRequest | None = None,
+) -> JobSummary:
+    """One-click ingest→…→eval. 409 with gaps if not ready. Never auto-flashes."""
+    body = body or TrainAllRequest()
+    force_fixture = body.force_fixture or body.source == "fixture"
+    report = await get_ready(
+        teacher=body.teacher,
+        allow_toy=body.allow_toy,
+        force_fixture=force_fixture,
+    )
+    if not report.get("ok"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "train_all not ready",
+                "gaps": report.get("gaps") or [],
+                "ready": False,
+            },
+        )
+    job_id = str(uuid4())
+    rec = JobRecord(
+        id=job_id,
+        kind="train_all",
+        status="pending",
+        created_at=_now(),
+        route_id=body.route_id,
+    )
+    _jobs[job_id] = rec
+    _subscribers[job_id] = []
+    background_tasks.add_task(
+        _run_train_all_job,
+        job_id,
+        route_id=body.route_id,
+        prefer=body.source,
+    )
+    return _summary(rec)
+
+
 @app.get("/routes")
 async def get_routes(
     source: Literal["auto", "connect", "ssh", "fixture"] = Query("auto"),
     limit: int = Query(20, ge=1, le=100),
+    device: str | None = Query(
+        None,
+        description="Discovered ADB device id (serial or host:port); may set SSH host",
+    ),
+    ssh_host: str | None = Query(
+        None,
+        description="Override MICI_SSH_HOST for this listing (from discovery picker)",
+    ),
 ) -> dict[str, Any]:
-    """List mici routes for the configured dongle (Connect / SSH / fixture)."""
-    cfg = load_ingest_config()
+    """List mici routes for the configured dongle (Connect / SSH / fixture).
+
+    After discovery, pass `device` and/or `ssh_host` (+ `source`) so the picker
+    does not require shell env archaeology.
+    """
+    cfg = apply_discovered_overrides(
+        load_ingest_config(),
+        ssh_host=ssh_host,
+        device_id=device,
+    )
     src, routes = ingest_list_routes(cfg, prefer=source, limit=limit)
     return {
         "dongle_id": cfg.dongle_id,
         "source": src.name,
+        "device": device,
+        "ssh_host": cfg.ssh_host,
         "routes": [r.summary_dict() for r in routes],
     }
 

@@ -1,4 +1,9 @@
-"""Detect AMD / ROCm / 7090 XT teacher GPU — never claim live if absent."""
+"""Detect teacher GPU (AMD/ROCm preferred for live Cinque).
+
+Live soft-labels still require a confirmed 7090 XT path today, but
+messaging reports whatever AMD/ROCm device is present — not
+``device_ready=false`` solely because the SKU is not a 7090.
+"""
 
 from __future__ import annotations
 
@@ -112,14 +117,15 @@ def detect_teacher_device(*, force_fixture: bool = False) -> TeacherDeviceInfo:
         )
 
     if has_amd:
+        seen = names[0] if names else ("ROCm GPU" if has_rocm else "amdgpu")
         return TeacherDeviceInfo(
-            available=False,
+            available=True,
             live=False,
-            backend="fixture",
-            device="fixture",
+            backend="rocm" if has_rocm else "amdgpu",
+            device=seen,
             detail=(
-                "AMD GPU seen but not confirmed 7090 XT / no live Cinque weights — "
-                "using fixture soft labels (live=false)"
+                f"AMD/ROCm device present ({seen}); live Cinque soft-labels still "
+                "need confirmed 7090 XT + weights — fixture soft labels (live=false)"
             ),
             meta={
                 "live": False,
@@ -127,6 +133,8 @@ def detect_teacher_device(*, force_fixture: bool = False) -> TeacherDeviceInfo:
                 "teacher": "Cinque/supercombo",
                 "amd_names": names[:5],
                 "rocm_smi": has_rocm,
+                "device_seen": seen,
+                "live_requires": "7090 XT + Cinque weights",
             },
         )
 
@@ -135,7 +143,10 @@ def detect_teacher_device(*, force_fixture: bool = False) -> TeacherDeviceInfo:
         live=False,
         backend="fixture",
         device="fixture",
-        detail="No AMD/ROCm/7090 XT detected — fixture soft labels (live=false)",
+        detail=(
+            "No AMD/ROCm teacher GPU detected — fixture soft labels (live=false). "
+            "Live Cinque path prefers RX 7090 XT when available."
+        ),
         meta={
             "live": False,
             "source": "fixture",

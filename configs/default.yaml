@@ -25,6 +25,9 @@ student:
   # I/O compatible with stock modelV2
   io_compatible: true
   checkpoint: null
+  min_train_hours: 50
+  # CI only — still live=false / not licensed
+  allow_toy_train: false
 
 pipeline:
   stages:
@@ -50,3 +53,7 @@ shards:
   fps: 20
   output_dir: artifacts/shards
   force_fixture: false
+
+eval:
+  min_train_hours: 50
+  allow_toy_train: false

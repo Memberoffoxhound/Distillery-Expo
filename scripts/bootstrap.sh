@@ -109,6 +109,84 @@ maybe_disable_steamos_readonly() {
   fi
 }
 
+# Run pacman / pacman-key as root when sudo exists (Deck Desktop).
+pacman_sudo() {
+  if have_cmd sudo; then
+    sudo "$@"
+  else
+    "$@"
+  fi
+}
+
+# After steamos-readonly disable (or on a fresh Arch image), the keyring DB
+# is often empty / not writable until init + populate. Must run before -Sy.
+die_pacman_keyring_help() {
+  die "pacman keyring / package install failed (common on Steam Deck after unlocking the read-only root).
+
+On Steam Deck Desktop, fix the keyring, then re-run ./scripts/bootstrap.sh:
+
+  sudo steamos-readonly disable
+  sudo pacman-key --init
+  sudo pacman-key --populate archlinux
+  # if these keyrings exist on your Deck:
+  sudo pacman-key --populate steamos
+  sudo pacman-key --populate holo
+  sudo pacman -Sy --needed python python-pip python-virtualenv nodejs npm
+
+Prefer fixing pacman. If you must unblock without it: install Node LTS
+(https://nodejs.org) and Python 3 with venv another way, then re-run
+./scripts/bootstrap.sh (it will skip toolchain install when tools are present)."
+}
+
+keyring_files_exist() {
+  _kr=$1
+  [ -d /usr/share/pacman/keyrings ] || return 1
+  [ -e "/usr/share/pacman/keyrings/${_kr}.gpg" ] && return 0
+  [ -e "/usr/share/pacman/keyrings/${_kr}-revoked" ] && return 0
+  # Some images ship a directory or multiple files prefixed by the name
+  for _f in /usr/share/pacman/keyrings/"${_kr}"*; do
+    [ -e "$_f" ] && return 0
+  done
+  return 1
+}
+
+ensure_pacman_keyring() {
+  info "  pacman keyring: init …"
+  if ! pacman_sudo pacman-key --init; then
+    warn "  pacman-key --init failed"
+    die_pacman_keyring_help
+  fi
+  info "  pacman keyring: init OK"
+
+  _populated=0
+  for _kr in archlinux steamos holo; do
+    if keyring_files_exist "$_kr"; then
+      info "  pacman keyring: populate ${_kr} …"
+      if pacman_sudo pacman-key --populate "$_kr"; then
+        info "  pacman keyring: populate ${_kr} OK"
+        _populated=1
+      else
+        warn "  pacman-key --populate ${_kr} failed"
+      fi
+    fi
+  done
+
+  # Fresh Arch containers always expect archlinux; try once more if nothing matched.
+  if [ "$_populated" = "0" ]; then
+    info "  pacman keyring: populate archlinux (no keyring files detected earlier) …"
+    if pacman_sudo pacman-key --populate archlinux; then
+      info "  pacman keyring: populate archlinux OK"
+      _populated=1
+    else
+      warn "  pacman-key --populate archlinux failed"
+    fi
+  fi
+
+  if [ "$_populated" = "0" ]; then
+    die_pacman_keyring_help
+  fi
+}
+
 die_missing_pkg_manager() {
   die "Missing python3/node/npm and no supported package manager found.
 
@@ -116,6 +194,8 @@ Install the toolchain, then re-run ./scripts/bootstrap.sh (or ./scripts/dev-up):
 
   Fedora / RHEL:   sudo dnf install -y python3 python3-pip nodejs npm
   Arch / SteamOS:  sudo steamos-readonly disable   # Steam Deck only
+                   sudo pacman-key --init
+                   sudo pacman-key --populate archlinux
                    sudo pacman -Sy --needed python python-pip python-virtualenv nodejs npm
   macOS:           brew install python node
                    (install Homebrew from https://brew.sh if needed)
@@ -318,18 +398,19 @@ else
           die "Internal: install needed but no pacman packages selected"
         fi
         if is_steamos || have_cmd steamos-readonly; then
-          info "  Steam Deck / SteamOS — pacman install after writable root"
+          info "  Steam Deck / SteamOS — writable root, then keyring, then pacman"
           maybe_disable_steamos_readonly
         else
           info "  Arch/pacman install: $pkgs"
         fi
+        # Keyring must be writable/populated before -Sy (Deck + fresh Arch).
+        ensure_pacman_keyring
         info "  pacman -Sy --needed $pkgs"
         info "  (may prompt for sudo password)"
         # shellcheck disable=SC2086
-        if have_cmd sudo; then
-          sudo pacman -Sy --needed --noconfirm $pkgs
-        else
-          pacman -Sy --needed --noconfirm $pkgs
+        if ! pacman_sudo pacman -Sy --needed --noconfirm $pkgs; then
+          warn "  pacman -Sy failed after keyring setup"
+          die_pacman_keyring_help
         fi
       else
         die_missing_pkg_manager

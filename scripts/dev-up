@@ -3,6 +3,7 @@
 #
 # Design:
 #   - Fedora first (what Bruce runs today)
+#   - Steam Deck / SteamOS / Arch via pacman (keyring init/populate before -Sy)
 #   - Portable by default: POSIX sh + python3 + node/npm only
 #   - No apt-only paths, no glibc-only assumptions, no Linux-only hard deps
 #   - macOS (incl. Apple Silicon): same commands; brew notes in bootstrap
@@ -12,9 +13,10 @@
 #                           public one-liner:
 #                           curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh
 #   scripts/dev-up        = day-to-day after toolchain is present
-#                           (venv + pip + npm + launch). On Fedora, if python3/
-#                           node/npm are missing, auto-installs via dnf instead
-#                           of only dying.
+#                           (venv + pip + npm + launch). On Fedora/Arch/SteamOS,
+#                           if python3/node/npm are missing, auto-installs via
+#                           dnf or pacman (with pacman-key --init/--populate)
+#                           instead of only dying.
 #
 # Usage (from repo root):
 #   ./scripts/dev-up
@@ -53,17 +55,168 @@ is_fedora_like() {
   }
 }
 
+os_release_id() {
+  if [ -f /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    printf '%s' "${ID:-}"
+  fi
+}
+
+os_release_id_like() {
+  if [ -f /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    printf '%s' "${ID_LIKE:-}"
+  fi
+}
+
+is_arch_like() {
+  have_cmd pacman || {
+    _id=$(os_release_id)
+    _like=$(os_release_id_like)
+    case "$_id" in
+      steamos|arch|endeavouros|manjaro|cachyos|garuda|archarm) return 0 ;;
+    esac
+    case " $_like " in
+      *" arch "*|*" archlinux "*) return 0 ;;
+    esac
+    return 1
+  }
+}
+
+is_steamos() {
+  _id=$(os_release_id)
+  [ "$_id" = "steamos" ] && return 0
+  have_cmd steamos-readonly && return 0
+  return 1
+}
+
+maybe_disable_steamos_readonly() {
+  if ! have_cmd steamos-readonly; then
+    return 0
+  fi
+  info "SteamOS detected — ensuring writable root (steamos-readonly disable) …"
+  if have_cmd sudo; then
+    sudo steamos-readonly disable || warn "steamos-readonly disable failed — if pacman fails, run it manually"
+  else
+    steamos-readonly disable || warn "steamos-readonly disable failed — run as root, then re-run"
+  fi
+}
+
+# Run pacman / pacman-key as root when sudo exists (Deck Desktop).
+pacman_sudo() {
+  if have_cmd sudo; then
+    sudo "$@"
+  else
+    "$@"
+  fi
+}
+
+# After steamos-readonly disable (or on a fresh Arch image), the keyring DB
+# is often empty / not writable until init + populate. Must run before -Sy.
+die_pacman_keyring_help() {
+  die "pacman keyring / package install failed (common on Steam Deck after unlocking the read-only root).
+
+On Steam Deck Desktop, fix the keyring, then re-run ./scripts/dev-up (or ./scripts/bootstrap.sh):
+
+  sudo steamos-readonly disable
+  sudo pacman-key --init
+  sudo pacman-key --populate archlinux
+  # if these keyrings exist on your Deck:
+  sudo pacman-key --populate steamos
+  sudo pacman-key --populate holo
+  sudo pacman -Sy --needed python python-pip python-virtualenv nodejs npm
+
+Prefer fixing pacman. If you must unblock without it: install Node LTS
+(https://nodejs.org) and Python 3 with venv another way, then re-run."
+}
+
+keyring_files_exist() {
+  _kr=$1
+  [ -d /usr/share/pacman/keyrings ] || return 1
+  [ -e "/usr/share/pacman/keyrings/${_kr}.gpg" ] && return 0
+  [ -e "/usr/share/pacman/keyrings/${_kr}-revoked" ] && return 0
+  # Some images ship a directory or multiple files prefixed by the name
+  for _f in /usr/share/pacman/keyrings/"${_kr}"*; do
+    [ -e "$_f" ] && return 0
+  done
+  return 1
+}
+
+ensure_pacman_keyring() {
+  # Idempotent across multiple ensure_cmd calls in one run.
+  if [ "${_DISTILLERY_PACMAN_KEYRING_READY:-0}" = "1" ]; then
+    return 0
+  fi
+
+  info "pacman keyring: init …"
+  if ! pacman_sudo pacman-key --init; then
+    warn "pacman-key --init failed"
+    die_pacman_keyring_help
+  fi
+  info "pacman keyring: init OK"
+
+  _populated=0
+  for _kr in archlinux steamos holo; do
+    if keyring_files_exist "$_kr"; then
+      info "pacman keyring: populate ${_kr} …"
+      if pacman_sudo pacman-key --populate "$_kr"; then
+        info "pacman keyring: populate ${_kr} OK"
+        _populated=1
+      else
+        warn "pacman-key --populate ${_kr} failed"
+      fi
+    fi
+  done
+
+  # Fresh Arch containers always expect archlinux; try once more if nothing matched.
+  if [ "$_populated" = "0" ]; then
+    info "pacman keyring: populate archlinux (no keyring files detected earlier) …"
+    if pacman_sudo pacman-key --populate archlinux; then
+      info "pacman keyring: populate archlinux OK"
+      _populated=1
+    else
+      warn "pacman-key --populate archlinux failed"
+    fi
+  fi
+
+  if [ "$_populated" = "0" ]; then
+    die_pacman_keyring_help
+  fi
+
+  _DISTILLERY_PACMAN_KEYRING_READY=1
+}
+
+pacman_install() {
+  pkgs=$1
+  if is_steamos || have_cmd steamos-readonly; then
+    info "Steam Deck / SteamOS — writable root, then keyring, then pacman"
+    maybe_disable_steamos_readonly
+  fi
+  # Keyring must be writable/populated before -Sy (Deck + fresh Arch).
+  ensure_pacman_keyring
+  info "installing via pacman: $pkgs"
+  info "(may prompt for sudo password; bare machines prefer ./scripts/bootstrap.sh)"
+  # shellcheck disable=SC2086
+  if ! pacman_sudo pacman -Sy --needed --noconfirm $pkgs; then
+    warn "pacman -Sy failed after keyring setup"
+    die_pacman_keyring_help
+  fi
+}
+
 OS=$(detect_os)
 
-# --- toolchain: Fedora auto-install via dnf; otherwise point at bootstrap ---
+# --- toolchain: Fedora dnf / Arch pacman auto-install; otherwise point at bootstrap ---
 ensure_cmd() {
   cmd=$1
   dnf_pkgs=$2
+  pacman_pkgs=$3
   if have_cmd "$cmd"; then
     return 0
   fi
 
-  if [ "$OS" = "linux" ] && is_fedora_like; then
+  if [ "$OS" = "linux" ] && (is_fedora_like || have_cmd dnf || have_cmd microdnf); then
     DNF=dnf
     have_cmd dnf || DNF=microdnf
     info "missing \`$cmd\` — installing via $DNF: $dnf_pkgs"
@@ -81,11 +234,30 @@ ensure_cmd() {
     die "still missing \`$cmd\` after dnf install. Try: ./scripts/bootstrap.sh"
   fi
 
+  if [ "$OS" = "linux" ] && (is_arch_like || have_cmd pacman); then
+    info "missing \`$cmd\` — installing via pacman: $pacman_pkgs"
+    pacman_install "$pacman_pkgs"
+    if have_cmd "$cmd"; then
+      info "installed \`$cmd\` OK"
+      return 0
+    fi
+    die "still missing \`$cmd\` after pacman install. Try: ./scripts/bootstrap.sh
+On Steam Deck: sudo steamos-readonly disable && sudo pacman-key --init && sudo pacman-key --populate archlinux && sudo pacman -Sy --needed $pacman_pkgs"
+  fi
+
   if [ "$OS" = "macos" ]; then
     die "missing \`$cmd\`. Install with Homebrew (brew install python node), or run ./scripts/bootstrap.sh"
   fi
 
-  die "missing \`$cmd\`. On Fedora: sudo dnf install $dnf_pkgs
+  die "missing \`$cmd\` and no supported package manager found.
+
+  Fedora / RHEL:   sudo dnf install $dnf_pkgs
+  Arch / SteamOS:  sudo steamos-readonly disable   # Steam Deck only
+                   sudo pacman-key --init
+                   sudo pacman-key --populate archlinux
+                   sudo pacman -Sy --needed $pacman_pkgs
+  macOS:           brew install python node
+
 Or bare-machine one-shot: ./scripts/bootstrap.sh
   (public one-liner: curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh)"
 }
@@ -94,12 +266,13 @@ info "Distillery Expo — one-command bring-up (os=$OS)"
 info "Repo: $ROOT"
 info ""
 
-# Fedora-first; macOS via brew (bootstrap) or manual install.
+# Fedora dnf / Arch|SteamOS pacman / macOS brew (via bootstrap).
 # Linux/Fedora:  sudo dnf install python3 python3-pip nodejs npm
+# Arch/SteamOS:  sudo pacman-key --init/--populate then pacman -Sy --needed …
 # macOS:         brew install python node
-ensure_cmd python3 "python3 python3-pip"
-ensure_cmd node "nodejs npm"
-ensure_cmd npm "npm"
+ensure_cmd python3 "python3 python3-pip" "python python-pip python-virtualenv"
+ensure_cmd node "nodejs npm" "nodejs npm"
+ensure_cmd npm "npm" "npm"
 
 PY_VER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
 info "python3 $PY_VER · node $(node -v) · npm $(npm -v)"
@@ -108,9 +281,13 @@ info "python3 $PY_VER · node $(node -v) · npm $(npm -v)"
 if [ ! -d "$VENV_DIR" ]; then
   info "Creating venv at $VENV_DIR …"
   if ! python3 -m venv "$VENV_DIR"; then
-    if [ "$OS" = "linux" ] && is_fedora_like; then
+    if [ "$OS" = "linux" ] && (is_fedora_like || have_cmd dnf); then
       info "venv failed — installing python3-pip via dnf and retrying…"
       if have_cmd sudo; then sudo dnf install -y python3 python3-pip; else dnf install -y python3 python3-pip; fi
+      python3 -m venv "$VENV_DIR"
+    elif [ "$OS" = "linux" ] && (is_arch_like || have_cmd pacman); then
+      info "venv failed — installing python-virtualenv via pacman and retrying…"
+      pacman_install "python python-pip python-virtualenv"
       python3 -m venv "$VENV_DIR"
     else
       die "python3 -m venv failed. Install venv support, or run ./scripts/bootstrap.sh"

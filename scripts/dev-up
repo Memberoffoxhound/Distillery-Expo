@@ -3,6 +3,7 @@
 #
 # Design:
 #   - Fedora first (what Bruce runs today)
+#   - Steam Deck / SteamOS / Arch via pacman
 #   - Portable by default: POSIX sh + python3 + node/npm only
 #   - No apt-only paths, no glibc-only assumptions, no Linux-only hard deps
 #   - macOS (incl. Apple Silicon): same commands; brew notes in bootstrap
@@ -12,9 +13,9 @@
 #                           public one-liner:
 #                           curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh
 #   scripts/dev-up        = day-to-day after toolchain is present
-#                           (venv + pip + npm + launch). On Fedora, if python3/
-#                           node/npm are missing, auto-installs via dnf instead
-#                           of only dying.
+#                           (venv + pip + npm + launch). On Fedora/Arch/SteamOS,
+#                           if python3/node/npm are missing, auto-installs via
+#                           dnf or pacman instead of only dying.
 #
 # Usage (from repo root):
 #   ./scripts/dev-up
@@ -53,17 +54,82 @@ is_fedora_like() {
   }
 }
 
+os_release_id() {
+  if [ -f /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    printf '%s' "${ID:-}"
+  fi
+}
+
+os_release_id_like() {
+  if [ -f /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    printf '%s' "${ID_LIKE:-}"
+  fi
+}
+
+is_arch_like() {
+  have_cmd pacman || {
+    _id=$(os_release_id)
+    _like=$(os_release_id_like)
+    case "$_id" in
+      steamos|arch|endeavouros|manjaro|cachyos|garuda|archarm) return 0 ;;
+    esac
+    case " $_like " in
+      *" arch "*|*" archlinux "*) return 0 ;;
+    esac
+    return 1
+  }
+}
+
+is_steamos() {
+  _id=$(os_release_id)
+  [ "$_id" = "steamos" ] && return 0
+  have_cmd steamos-readonly && return 0
+  return 1
+}
+
+maybe_disable_steamos_readonly() {
+  if ! have_cmd steamos-readonly; then
+    return 0
+  fi
+  info "SteamOS detected — ensuring writable root (steamos-readonly disable) …"
+  if have_cmd sudo; then
+    sudo steamos-readonly disable || warn "steamos-readonly disable failed — if pacman fails, run it manually"
+  else
+    steamos-readonly disable || warn "steamos-readonly disable failed — run as root, then re-run"
+  fi
+}
+
+pacman_install() {
+  pkgs=$1
+  if is_steamos || have_cmd steamos-readonly; then
+    maybe_disable_steamos_readonly
+  fi
+  info "installing via pacman: $pkgs"
+  info "(may prompt for sudo password; bare machines prefer ./scripts/bootstrap.sh)"
+  # shellcheck disable=SC2086
+  if have_cmd sudo; then
+    sudo pacman -Sy --needed --noconfirm $pkgs
+  else
+    pacman -Sy --needed --noconfirm $pkgs
+  fi
+}
+
 OS=$(detect_os)
 
-# --- toolchain: Fedora auto-install via dnf; otherwise point at bootstrap ---
+# --- toolchain: Fedora dnf / Arch pacman auto-install; otherwise point at bootstrap ---
 ensure_cmd() {
   cmd=$1
   dnf_pkgs=$2
+  pacman_pkgs=$3
   if have_cmd "$cmd"; then
     return 0
   fi
 
-  if [ "$OS" = "linux" ] && is_fedora_like; then
+  if [ "$OS" = "linux" ] && (is_fedora_like || have_cmd dnf || have_cmd microdnf); then
     DNF=dnf
     have_cmd dnf || DNF=microdnf
     info "missing \`$cmd\` — installing via $DNF: $dnf_pkgs"
@@ -81,11 +147,28 @@ ensure_cmd() {
     die "still missing \`$cmd\` after dnf install. Try: ./scripts/bootstrap.sh"
   fi
 
+  if [ "$OS" = "linux" ] && (is_arch_like || have_cmd pacman); then
+    info "missing \`$cmd\` — installing via pacman: $pacman_pkgs"
+    pacman_install "$pacman_pkgs"
+    if have_cmd "$cmd"; then
+      info "installed \`$cmd\` OK"
+      return 0
+    fi
+    die "still missing \`$cmd\` after pacman install. Try: ./scripts/bootstrap.sh
+On Steam Deck: sudo steamos-readonly disable && sudo pacman -Sy --needed $pacman_pkgs"
+  fi
+
   if [ "$OS" = "macos" ]; then
     die "missing \`$cmd\`. Install with Homebrew (brew install python node), or run ./scripts/bootstrap.sh"
   fi
 
-  die "missing \`$cmd\`. On Fedora: sudo dnf install $dnf_pkgs
+  die "missing \`$cmd\` and no supported package manager found.
+
+  Fedora / RHEL:   sudo dnf install $dnf_pkgs
+  Arch / SteamOS:  sudo steamos-readonly disable   # Steam Deck only
+                   sudo pacman -Sy --needed $pacman_pkgs
+  macOS:           brew install python node
+
 Or bare-machine one-shot: ./scripts/bootstrap.sh
   (public one-liner: curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh)"
 }
@@ -94,12 +177,13 @@ info "Distillery Expo — one-command bring-up (os=$OS)"
 info "Repo: $ROOT"
 info ""
 
-# Fedora-first; macOS via brew (bootstrap) or manual install.
+# Fedora dnf / Arch|SteamOS pacman / macOS brew (via bootstrap).
 # Linux/Fedora:  sudo dnf install python3 python3-pip nodejs npm
+# Arch/SteamOS:  sudo pacman -Sy --needed python python-pip python-virtualenv nodejs npm
 # macOS:         brew install python node
-ensure_cmd python3 "python3 python3-pip"
-ensure_cmd node "nodejs npm"
-ensure_cmd npm "npm"
+ensure_cmd python3 "python3 python3-pip" "python python-pip python-virtualenv"
+ensure_cmd node "nodejs npm" "nodejs npm"
+ensure_cmd npm "npm" "npm"
 
 PY_VER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
 info "python3 $PY_VER · node $(node -v) · npm $(npm -v)"
@@ -108,9 +192,13 @@ info "python3 $PY_VER · node $(node -v) · npm $(npm -v)"
 if [ ! -d "$VENV_DIR" ]; then
   info "Creating venv at $VENV_DIR …"
   if ! python3 -m venv "$VENV_DIR"; then
-    if [ "$OS" = "linux" ] && is_fedora_like; then
+    if [ "$OS" = "linux" ] && (is_fedora_like || have_cmd dnf); then
       info "venv failed — installing python3-pip via dnf and retrying…"
       if have_cmd sudo; then sudo dnf install -y python3 python3-pip; else dnf install -y python3 python3-pip; fi
+      python3 -m venv "$VENV_DIR"
+    elif [ "$OS" = "linux" ] && (is_arch_like || have_cmd pacman); then
+      info "venv failed — installing python-virtualenv via pacman and retrying…"
+      pacman_install "python python-pip python-virtualenv"
       python3 -m venv "$VENV_DIR"
     else
       die "python3 -m venv failed. Install venv support, or run ./scripts/bootstrap.sh"

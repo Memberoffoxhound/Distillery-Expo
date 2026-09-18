@@ -34,7 +34,9 @@ git clone https://github.com/Memberoffoxhound/Distillery-Expo.git ~/Distillery-E
 cd ~/Distillery-Expo && ./scripts/bootstrap.sh
 ```
 
-That prints `[1/7]…[7/7]` progress, installs missing tools (**Fedora/`dnf` first**; **macOS/`brew`** when present), clones to `~/Distillery-Expo` if needed, installs repo deps, and starts Expo at **http://127.0.0.1:5173**.
+That prints `[1/7]…[7/7]` progress, installs missing tools (**Fedora/`dnf`**, **Steam Deck / Arch/`pacman`**, **macOS/`brew`**), clones to `~/Distillery-Expo` if needed, installs repo deps, and starts Expo at **http://127.0.0.1:5173**.
+
+**Steam Deck / SteamOS:** bootstrap runs `steamos-readonly disable` then `pacman -Sy --needed python python-pip python-virtualenv nodejs npm` (sudo). Desktop mode + password for sudo recommended.
 
 Already cloned? From the repo root:
 
@@ -53,9 +55,11 @@ Opens **http://127.0.0.1:5173**. Then: **Pull mici route** → **Pack shards**.
 | Script | Role |
 |--------|------|
 | `scripts/bootstrap.sh` | Bare machine: system toolchain + venv/pip/npm + launch Expo |
-| `scripts/dev-up` | After python3/node/npm exist: venv + deps + launch. On Fedora, auto-`dnf` installs missing tools instead of only dying |
+| `scripts/dev-up` | After python3/node/npm exist: venv + deps + launch. On Fedora/`dnf` or Arch/SteamOS/`pacman`, auto-installs missing tools instead of only dying |
 
-Both are POSIX sh, Fedora-first, portable (no apt-only / glibc-only hard-coding). Safe to re-run.
+Both are POSIX sh, Fedora-first + Arch/Steam Deck + macOS, portable (no apt-only / glibc-only hard-coding). Safe to re-run.
+
+If no `dnf` / `pacman` / `brew` is found, the scripts print a short install hint for each platform rather than a Fedora-only error.
 
 ### Manual two-terminal (optional)
 

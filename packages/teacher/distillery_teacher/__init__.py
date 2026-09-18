@@ -5,6 +5,11 @@ from .comma_master import (
     list_comma_master_teachers,
     select_comma_master_teacher,
 )
+from .consume import (
+    TeacherChecksumError,
+    consume_big_teacher_for_teach,
+    verify_cached_big_teacher,
+)
 from .download import (
     TeacherArtifactStatus,
     cached_big_teacher_ok,
@@ -28,4 +33,7 @@ __all__ = [
     "ensure_big_teacher_onnx",
     "cached_big_teacher_ok",
     "TeacherArtifactStatus",
+    "consume_big_teacher_for_teach",
+    "verify_cached_big_teacher",
+    "TeacherChecksumError",
 ]

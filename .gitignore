@@ -42,3 +42,6 @@ Thumbs.db
 jobs/
 *.tsbuildinfo
 artifacts/
+!artifacts/teachers/
+!artifacts/teachers/README.md
+!artifacts/teachers/.gitkeep

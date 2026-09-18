@@ -205,6 +205,15 @@ export interface TeacherModel {
   [key: string]: unknown;
 }
 
+export const BIG_TEACHER_NAME = "big_driving_supercombo";
+
+function isBigTeacher(model: TeacherModel | null | undefined): boolean {
+  return [model?.name, model?.id, model?.label]
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim().replace(/\.onnx$/i, ""))
+    .includes(BIG_TEACHER_NAME);
+}
+
 export interface TeacherInfo {
   selected?: TeacherModel | null;
   /** Future: list from GET /teachers or /health.teachers */
@@ -356,7 +365,7 @@ export function fetchReady(opts?: {
 }
 
 /**
- * GET /teachers — comma master · model; fixture labeled offline.
+ * GET /teachers — the Teach UI exposes only the locked big teacher.
  * Never invent a live comma-master claim from silence.
  */
 export async function fetchTeachers(): Promise<TeacherInfo> {
@@ -366,17 +375,21 @@ export async function fetchTeachers(): Promise<TeacherInfo> {
     source?: string | null;
     count?: number;
   }>("/teachers");
-  const list = raw.teachers ?? [];
-  const selected = raw.selected ?? list[0] ?? null;
-  const src = String(raw.source ?? selected?.source ?? "");
+  const rawList = raw.teachers ?? [];
+  const list = rawList.filter(isBigTeacher);
+  // The API may still select the old stock model; never let that selection
+  // leak into Teach. Prefer a big entry from the filtered catalog instead.
+  const selected = isBigTeacher(raw.selected) ? raw.selected : list[0] ?? null;
+  const src = String(raw.source ?? raw.selected?.source ?? "");
   const fixture =
     src === "fixture" ||
-    selected?.source === "fixture" ||
-    selected?.live === false ||
-    list.some((m) => m.source === "fixture" || m.live === false);
+    raw.selected?.source === "fixture" ||
+    raw.selected?.live === false ||
+    rawList.some((m) => m.source === "fixture" || m.live === false);
   const live =
     !fixture &&
     (selected?.live === true ||
+      raw.selected?.live === true ||
       src.includes("openpilot") ||
       src === "comma_master" ||
       list.some((m) => m.live === true));
@@ -392,7 +405,7 @@ export async function fetchTeachers(): Promise<TeacherInfo> {
   };
 }
 
-/** Calm display: "comma master · <model>" or explicit fixture. Never Chestnut. */
+/** Calm display: the big teacher only, or explicit offline fixture. */
 export function formatTeacherLabel(info: TeacherInfo | null): {
   primary: string;
   tone: "live" | "fixture" | "unknown" | "checking";
@@ -406,12 +419,7 @@ export function formatTeacherLabel(info: TeacherInfo | null): {
     };
   }
   const selected = info.selected;
-  const name =
-    selected?.name ??
-    info.model_name ??
-    (typeof selected?.label === "string" ? selected.label : null);
-  const version = selected?.version ?? info.model_version ?? null;
-  const modelBit = [name, version].filter(Boolean).join(" ");
+  const hasTeacherSignal = Boolean(selected || info.model_name || info.model_version);
   const isFixture =
     info.fixture === true ||
     info.status === "fixture" ||
@@ -428,24 +436,24 @@ export function formatTeacherLabel(info: TeacherInfo | null): {
 
   if (isFixture) {
     return {
-      primary: modelBit ? `fixture · ${modelBit}` : "fixture · offline teacher",
+      primary: `fixture · ${BIG_TEACHER_NAME}`,
       tone: "fixture",
-      detail: "Labeled fixture teacher — not commaai/openpilot master live.",
+      detail: `Labeled fixture teacher · ${BIG_TEACHER_NAME} — offline, not commaai/openpilot master live.`,
     };
   }
   if (isLive) {
     return {
-      primary: modelBit
-        ? `comma master · ${modelBit}`
-        : "comma master · (model pending)",
+      primary: `comma master · ${BIG_TEACHER_NAME}`,
       tone: "live",
-      detail: "commaai/openpilot master big driving model — no Chestnut.",
+      detail: `commaai/openpilot master · ${BIG_TEACHER_NAME} — no Chestnut.`,
     };
   }
   return {
-    primary: modelBit ? `Teacher · ${modelBit}` : "Teacher · unknown",
+    primary: hasTeacherSignal ? `Teacher · ${BIG_TEACHER_NAME}` : "Teacher · unknown",
     tone: "unknown",
-    detail: "Teacher list/source pending from Craig (/teachers).",
+    detail: hasTeacherSignal
+      ? `Teacher target locked to ${BIG_TEACHER_NAME}; list/source pending from Craig (/teachers).`
+      : "Teacher list/source pending from Craig (/teachers).",
   };
 }
 

@@ -57,6 +57,9 @@ fixtures/sample_route.json
 | `GET /discover/devices` | `adb devices -l` → id, model, transport, suggested_host |
 | `GET /discover/connect` | Connect JWT status (masked; no secrets) |
 | `POST /discover/connect` | `{ "jwt": "...", "persist": true }` → env + `.cache/connect_jwt` |
+| `GET /discover/ssh` | SSH status (host/user/port/identity path; no key bytes) |
+| `POST /discover/ssh` | `{ "host", "user", "port", "identity_path?", "persist" }` → env + `.cache/ssh_config.json` |
+| `POST /discover/ssh/test` | Short SSH probe `{ ok, error }` (~5s timeout) |
 | `GET /routes?source=&device=&ssh_host=` | List routes using discovered device/source |
 
 Fixture remains the offline fallback and is labeled `meta.label=fixture`.

@@ -28,7 +28,16 @@ def test_health(client):
 def test_dongle(client):
     r = client.get("/dongle")
     assert r.status_code == 200
-    assert r.json()["dongle_id"] == "3e2de7ed673817c2"
+    data = r.json()
+    assert data["dongle_id"] == "3e2de7ed673817c2"
+    assert "cams" in data
+    assert "connect_available" in data
+    assert "ssh_available" in data
+    assert "force_fixture" in data
+    assert isinstance(data["adb_available"], bool)
+    assert data["adb_status"] in ("ready", "not_on_path", "error")
+    assert isinstance(data["adb_device_count"], int)
+    assert data["adb_device_count"] >= 0
 
 
 def test_list_routes_fixture(client):

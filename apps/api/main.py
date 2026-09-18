@@ -831,13 +831,26 @@ async def list_stages() -> dict[str, list[str]]:
 
 @app.get("/dongle")
 async def get_dongle() -> dict[str, Any]:
+    """Dongle + Connect/SSH posture, plus ADB readiness for Expo status chips."""
     cfg = load_ingest_config()
+    adb = list_adb_devices()
+    adb_available = bool(adb.get("adb_available"))
+    devices = adb.get("devices") or []
+    if not adb_available:
+        adb_status = "not_on_path"
+    elif not adb.get("ok", False):
+        adb_status = "error"
+    else:
+        adb_status = "ready"
     return {
         "dongle_id": cfg.dongle_id,
         "cams": list(cfg.cams),
         "connect_available": cfg.connect_available,
         "ssh_available": cfg.ssh_available,
         "force_fixture": cfg.force_fixture,
+        "adb_available": adb_available,
+        "adb_status": adb_status,
+        "adb_device_count": len(devices),
     }
 
 

@@ -840,3 +840,33 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .shard-sample { padding: 0.35rem 0.45rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-1); }
 .shard-sample-id { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; }
 .shard-sample-id .tag { font-family: var(--font); font-size: 0.65rem; padding: 0.05rem 0.35rem; border-radius: 999px; border: 1px solid var(--border-hi); color: var(--text-dim); }
+
+.license-banner {
+  margin: 0.45rem 0 0.55rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  border: 1px solid var(--border);
+}
+.license-banner.hold {
+  color: var(--warn);
+  border-color: #8a7020;
+  background: rgba(240, 180, 41, 0.08);
+}
+.license-banner.ok {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: rgba(92, 225, 176, 0.06);
+}
+.tile.fail { border-color: #8a3038; }
+.tile .tile-mark {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--text-mute);
+  margin-top: 0.15rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tile.pass .tile-mark { color: var(--accent-dim); }
+.tile.fail .tile-mark { color: var(--danger); }

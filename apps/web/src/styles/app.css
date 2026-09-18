@@ -735,3 +735,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .flash-box h3 { margin: 0; font-size: 0.95rem; }
 .flash-box p { margin: 0; font-size: 0.78rem; color: var(--text-dim); line-height: 1.4; }
+
+.shard-samples { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.5rem; }
+.shard-sample { padding: 0.35rem 0.45rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-1); }
+.shard-sample-id { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; }
+.shard-sample-id .tag { font-family: var(--font); font-size: 0.65rem; padding: 0.05rem 0.35rem; border-radius: 999px; border: 1px solid var(--border-hi); color: var(--text-dim); }

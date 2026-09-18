@@ -1,18 +1,10 @@
 #!/usr/bin/env sh
 # Distillery Expo — bootstrap (system toolchain + deps + Expo)
 #
-# Phil bar: one authenticated pipe|sh (or local ./scripts/bootstrap.sh) that
-# installs everything with progress and lands in Expo.
+# Bare-machine one-liner (or local ./scripts/bootstrap.sh) that installs
+# everything with progress and lands in Expo:
 #
-# This repo is PRIVATE. Naked raw.githubusercontent.com URLs 404 — never advertise them.
-# Prefer (requires `gh auth login`):
-#
-#   gh api repos/Memberoffoxhound/Distillery-Expo/contents/scripts/bootstrap.sh?ref=main --jq .content | base64 -d | sh
-#
-# Or authenticated raw:
-#
-#   curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
-#     "https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh" | sh
+#   curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh
 #
 # Or after clone (update-aware):
 #   ./scripts/bootstrap.sh
@@ -115,7 +107,7 @@ if [ -z "$ROOT" ]; then
     if have_cmd git; then
       info "  git clone $REPO_URL"
       if ! git clone --progress "$REPO_URL" "$DEFAULT_HOME"; then
-        die "git clone failed. Private repo? Run: gh auth login   (or set a token / GIT_ASKPASS) then retry."
+        die "git clone failed. Check network access and the repository URL, then retry."
       fi
       ROOT=$(CDPATH= cd -- "$DEFAULT_HOME" && pwd)
     else

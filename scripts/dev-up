@@ -9,7 +9,8 @@
 #
 # Roles:
 #   scripts/bootstrap.sh  = bare-machine path (system toolchain + deps + Expo)
-#                           private: gh api …/contents/scripts/bootstrap.sh?ref=main | base64 -d | sh
+#                           public one-liner:
+#                           curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh
 #   scripts/dev-up        = day-to-day after toolchain is present
 #                           (venv + pip + npm + launch). On Fedora, if python3/
 #                           node/npm are missing, auto-installs via dnf instead
@@ -86,7 +87,7 @@ ensure_cmd() {
 
   die "missing \`$cmd\`. On Fedora: sudo dnf install $dnf_pkgs
 Or bare-machine one-shot: ./scripts/bootstrap.sh
-  (private repo — use gh api …/contents/scripts/bootstrap.sh?ref=main | base64 -d | sh; naked raw URLs 404)"
+  (public one-liner: curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh)"
 }
 
 info "Distillery Expo — one-command bring-up (os=$OS)"

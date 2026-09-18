@@ -19,27 +19,16 @@ Dongle default: `3e2de7ed673817c2` (see `configs/default.yaml`).
 
 ## Quickstart — bootstrap (bare machine)
 
-This repo is **private**. A naked `raw.githubusercontent.com` URL **404s** without auth — never advertise that path.
-
-If you do not have Node/Python yet (or want the Phil-bar path), use an **authenticated** one-shot (requires `gh auth login` first):
-
-**Preferred** — Contents API (works with `gh` auth, no raw URL):
+If you do not have Node/Python yet (or want the bare-machine path), run the public one-liner:
 
 ```bash
-gh api repos/Memberoffoxhound/Distillery-Expo/contents/scripts/bootstrap.sh?ref=main --jq .content | base64 -d | sh
-```
-
-**Or** — authenticated raw fetch:
-
-```bash
-curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
-  "https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh" | sh
+curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh
 ```
 
 **Or** — clone, then run locally (update-aware):
 
 ```bash
-gh repo clone Memberoffoxhound/Distillery-Expo ~/Distillery-Expo
+git clone https://github.com/Memberoffoxhound/Distillery-Expo.git ~/Distillery-Expo
 cd ~/Distillery-Expo && ./scripts/bootstrap.sh
 ```
 

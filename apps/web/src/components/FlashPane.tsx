@@ -79,7 +79,7 @@ export function FlashPane({
       <div className="flash-box flash-locked">
         <EmptyState
           title="Not licensed yet"
-          body="We're training a driving agent. Confirm stays disabled until eval_passed=true and the pipeline gates flash. Default is closed — no teenagers with permits."
+          body="We're training a driving agent. Confirm stays disabled until the student matches the teacher (eval_passed=true) and flash is gated. Default closed — solid distill, not a permit."
           hint={
             ingestOnly
               ? "Ingest/shard jobs never unlock flash"
@@ -130,7 +130,7 @@ export function FlashPane({
           ? "eval_passed=true on a live=false / fixture path. Confirm only for a simulated write — not a road license."
           : "eval_passed=true. Confirm to write the stock-modelV2 I/O ONNX student to mici / QCOM. Never auto-flash."
         : flashGated && !evalPassed
-          ? "Flash is gated but eval_passed=false — scorecard closed. Confirm stays locked."
+          ? "Flash is gated but eval_passed=false — student does not yet match teacher. Confirm stays locked."
           : "Flash stage is gated but eval has not passed — confirm stays locked.";
 
   const showBar = running || done;
@@ -156,7 +156,7 @@ export function FlashPane({
           ? "fixture/offline — not a road license."
           : canConfirm
             ? "gate cleared — your confirm still required."
-            : "not licensed yet — no teenagers with permits."}
+            : "not licensed yet — must match teacher driving first."}
       </div>
       {decision?.chosen && (
         <div className="stage-decision muted">

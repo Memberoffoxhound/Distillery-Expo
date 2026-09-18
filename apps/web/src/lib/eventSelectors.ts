@@ -129,3 +129,40 @@ export function stageRunning(
       e.payload.status === "running"
   );
 }
+
+/** Prefer Graig/Craig metric name=eval_passed (1.0/0.0). Default false = not licensed. */
+export function readEvalPassed(events: DistilleryEvent[]): boolean {
+  let passed = false;
+  let seen = false;
+  for (const ev of events) {
+    if (ev.kind !== "metric") continue;
+    const name = String(ev.payload.name ?? "");
+    if (name !== "eval_passed" && name !== "eval_pass") continue;
+    seen = true;
+    passed = Number(ev.payload.value ?? 0) >= 1.0;
+  }
+  if (seen) return passed;
+  // Decision rationale may carry eval_passed=true/false
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]!;
+    if (ev.kind !== "decision" || ev.stage !== "eval") continue;
+    const blob = `${ev.payload.rationale ?? ""} ${ev.payload.chosen ?? ""}`;
+    if (/eval_passed\s*=\s*true/i.test(blob)) return true;
+    if (/eval_passed\s*=\s*false/i.test(blob)) return false;
+  }
+  return false;
+}
+
+/** live=false (or fixture meta) means offline / not a road license. */
+export function readLiveFlag(events: DistilleryEvent[]): boolean | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]!;
+    const p = ev.payload as Record<string, unknown>;
+    if (typeof p.live === "boolean") return p.live;
+    const meta = (p.meta as Record<string, unknown> | undefined) ?? {};
+    if (typeof meta.live === "boolean") return meta.live;
+    if (meta.fixture === true) return false;
+  }
+  return null;
+}
+

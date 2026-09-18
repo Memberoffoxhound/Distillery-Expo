@@ -1,0 +1,156 @@
+#!/usr/bin/env sh
+# Distillery Expo — one-command installer/launcher (M2)
+#
+# Design:
+#   - Fedora first (what Bruce runs today)
+#   - Portable by default: POSIX sh + python3 + node/npm only
+#   - No apt-only paths, no glibc-only assumptions, no Linux-only hard deps
+#   - macOS (incl. Apple Silicon) is a near-term follow-on: detect OS, same
+#     commands; brew/python3/node notes stay in comments/docs only for now
+#
+# Usage (from repo root):
+#   ./scripts/dev-up
+#
+# Lands you at http://127.0.0.1:5173 — then Pull mici route → Pack shards.
+
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+cd "$ROOT"
+
+API_PORT="${DISTILLERY_API_PORT:-8000}"
+WEB_PORT="${DISTILLERY_WEB_PORT:-5173}"
+VENV_DIR="${DISTILLERY_VENV:-$ROOT/.venv}"
+
+info()  { printf '%s\n' "$*"; }
+warn()  { printf 'warn: %s\n' "$*" >&2; }
+die()   { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+detect_os() {
+  # Portable uname — do not assume Linux. macOS follow-on hooks go here.
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    Linux*)  echo linux ;;
+    Darwin*) echo macos ;;
+    *)       echo other ;;
+  esac
+}
+
+OS=$(detect_os)
+
+# --- toolchain checks (friendly, install-hint only; no package-manager hard-coding) ---
+need_cmd() {
+  cmd=$1
+  hint=$2
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    die "missing \`$cmd\`. $hint"
+  fi
+}
+
+info "Distillery Expo — one-command bring-up (os=$OS)"
+info "Repo: $ROOT"
+info ""
+
+# Fedora-first hints; macOS notes kept as comments for cheap follow-on.
+# Linux/Fedora:  sudo dnf install python3 python3-pip nodejs npm
+# macOS later:   brew install python node   (Apple Silicon: same brew formulae)
+need_cmd python3 "Install Python 3.10+ (Fedora: sudo dnf install python3 python3-pip)."
+need_cmd node    "Install Node.js 18+ (Fedora: sudo dnf install nodejs npm)."
+need_cmd npm     "Install npm (Fedora: sudo dnf install npm)."
+
+PY_VER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+info "python3 $PY_VER · node $(node -v) · npm $(npm -v)"
+
+# --- Python venv + editable install ---
+if [ ! -d "$VENV_DIR" ]; then
+  info "Creating venv at $VENV_DIR …"
+  python3 -m venv "$VENV_DIR"
+fi
+
+# shellcheck disable=SC1091
+. "$VENV_DIR/bin/activate"
+
+# Idempotent: re-run pip if package missing or --force
+NEED_PIP=0
+if ! python -c "import distillery_events, distillery_ingest, distillery_shards, api" 2>/dev/null; then
+  NEED_PIP=1
+fi
+if [ "${DISTILLERY_FORCE_PIP:-0}" = "1" ]; then
+  NEED_PIP=1
+fi
+if [ "$NEED_PIP" = "1" ]; then
+  info "Installing Python package (pip install -e \".[dev]\") …"
+  python -m pip install -q --upgrade pip
+  python -m pip install -q -e ".[dev]"
+else
+  info "Python package already importable — skipping pip."
+fi
+
+# --- Web deps ---
+WEB_DIR="$ROOT/apps/web"
+if [ ! -d "$WEB_DIR/node_modules" ] || [ "${DISTILLERY_FORCE_NPM:-0}" = "1" ]; then
+  info "Installing web deps (npm install in apps/web) …"
+  (cd "$WEB_DIR" && npm install --silent)
+else
+  info "apps/web/node_modules present — skipping npm install."
+fi
+
+# --- Clean up previous launcher children if re-run ---
+API_PID_FILE="$ROOT/.cache/dev-up-api.pid"
+WEB_PID_FILE="$ROOT/.cache/dev-up-web.pid"
+mkdir -p "$ROOT/.cache"
+
+stop_pidfile() {
+  pf=$1
+  if [ -f "$pf" ]; then
+    old=$(cat "$pf" 2>/dev/null || true)
+    if [ -n "${old:-}" ] && kill -0 "$old" 2>/dev/null; then
+      kill "$old" 2>/dev/null || true
+      sleep 0.3
+    fi
+    rm -f "$pf"
+  fi
+}
+
+stop_pidfile "$API_PID_FILE"
+stop_pidfile "$WEB_PID_FILE"
+
+# --- Start API + web ---
+info ""
+info "Starting API on :$API_PORT …"
+# Prefer module path that matches installed package layout
+uvicorn api.main:app --host 127.0.0.1 --port "$API_PORT" --reload >"$ROOT/.cache/dev-up-api.log" 2>&1 &
+echo $! >"$API_PID_FILE"
+
+info "Starting web on :$WEB_PORT …"
+(cd "$WEB_DIR" && npm run dev -- --host 127.0.0.1 --port "$WEB_PORT") >"$ROOT/.cache/dev-up-web.log" 2>&1 &
+echo $! >"$WEB_PID_FILE"
+
+# Wait briefly for health
+i=0
+while [ "$i" -lt 40 ]; do
+  if python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$API_PORT/health', timeout=0.5)" 2>/dev/null; then
+    break
+  fi
+  i=$((i + 1))
+  sleep 0.25
+done
+
+info ""
+info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+info "  Expo UI:  http://127.0.0.1:$WEB_PORT"
+info "  API:      http://127.0.0.1:$API_PORT/health"
+info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+info ""
+info "Simple-user next steps:"
+info "  1. Open the Expo URL above"
+info "  2. Pull mici route  (ingest — fixture if no device creds)"
+info "  3. Pack shards      (POST /jobs/shard or Pack shards in UI)"
+info ""
+info "Logs:  .cache/dev-up-api.log  ·  .cache/dev-up-web.log"
+info "Stop:  kill \$(cat .cache/dev-up-api.pid) \$(cat .cache/dev-up-web.pid)"
+info ""
+info "Re-run safe. Set DISTILLERY_FORCE_PIP=1 / DISTILLERY_FORCE_NPM=1 to reinstall."
+
+# Keep script attached? Prefer exit so Bruce's shell returns; children keep running.
+# If foreground preferred later, trap + wait here. For one-command "land in Expo", exit is fine.
+exit 0

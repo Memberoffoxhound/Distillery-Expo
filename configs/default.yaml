@@ -43,3 +43,10 @@ api:
 
 web:
   port: 5173
+
+# M2 shard packing
+shards:
+  window_frames: 120
+  fps: 20
+  output_dir: artifacts/shards
+  force_fixture: false

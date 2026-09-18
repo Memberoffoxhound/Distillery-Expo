@@ -73,8 +73,8 @@ function pct(frac: number): string {
 
 /**
  * Shard pack pane — binds to stage=shard progress / metric / stage events
- * the same way Ingest/Train panes do. Idle copy stays honest until Craig's
- * pack contracts stream real events (demo already emits them on Run demo).
+ * the same way Ingest/Train panes do. Idle copy stays honest when pack jobs stream
+ * stage=shard events (demo already emits them on Run demo).
  */
 export function ShardPane({ events }: { events: DistilleryEvent[] }) {
   const metrics = latestMetrics(events, "shard");
@@ -119,7 +119,7 @@ export function ShardPane({ events }: { events: DistilleryEvent[] }) {
         <EmptyState
           title="Waiting to pack"
           body="Ingest is done. This pane stays quiet until the pipeline emits shard stage, progress, or metric events."
-          hint="Run demo streams pack events · dedicated shard jobs land with Craig."
+          hint="Pack shards runs a dedicated pack job · Run demo also streams pack events."
         />
       );
     }

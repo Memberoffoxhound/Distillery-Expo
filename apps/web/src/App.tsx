@@ -59,6 +59,13 @@ export default function App() {
           </button>
           <button
             disabled={busy}
+            onClick={() => job.startShard({ source: "fixture" })}
+            title="POST /jobs/shard {source:fixture}"
+          >
+            Pack shards
+          </button>
+          <button
+            disabled={busy}
             onClick={() => job.startDemo()}
             title="Full M0 staged demo (flash stays gated)"
           >

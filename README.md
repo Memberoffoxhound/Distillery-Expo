@@ -2,9 +2,8 @@
 
 **One-stop tinygrad distill control room** for comma mici routes → Cinque/supercombo teacher (7090 XT) → lighter stock-modelV2-I/O student (mici/QCOM) → export / eval / gated flash.
 
-> **M1** = real mici ingest thin slice (Connect + SSH + fixture) onto the typed event bus.
-> **M2 UX** = Expo Shard pane (calm idle + truthful pack progress on `stage=shard` events). Flash stays gated.
-> M0 demo pipeline still available. No teacher/train/flash work yet — flash stays gated.
+> **M2** = shards pack on the typed event bus + one-command launcher (`./scripts/dev-up`).
+> Expo Shard pane binds truthful `stage=shard` progress. Flash stays gated. No teacher/train/flash work yet.
 
 ## Hardware (v1)
 
@@ -18,7 +17,17 @@
 
 Dongle default: `3e2de7ed673817c2` (see `configs/default.yaml`).
 
-## Quickstart — live demo UI
+## Quickstart — one command
+
+```bash
+./scripts/dev-up
+```
+
+Opens **http://127.0.0.1:5173**. Then: **Pull mici route** → **Pack shards**.
+
+`scripts/dev-up` (POSIX sh, Fedora-first, portable): checks `python3` / `node` / `npm`, creates `.venv` if needed, `pip install -e ".[dev]"`, `npm install` in `apps/web` if needed, starts API (:8000) + web (:5173). Safe to re-run. macOS (incl. Apple Silicon) is a near-term follow-on — same script shape, no apt/glibc hard-coding.
+
+### Manual two-terminal (optional)
 
 Two terminals from the repo root:
 
@@ -28,7 +37,7 @@ Two terminals from the repo root:
 cd /path/to/Distillery-Expo
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-uvicorn apps.api.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Terminal 2 — Web
@@ -62,6 +71,7 @@ curl -s -X POST http://127.0.0.1:8000/jobs/ingest   -H 'Content-Type: applicatio
 source .venv/bin/activate
 dex routes                 # list mici routes (API or --local)
 dex ingest --source fixture
+dex shards --source fixture
 dex demo                   # full staged demo (M0)
 dex stages
 ```
@@ -86,7 +96,8 @@ Distillery-Expo/
 ├── packages/
 │   ├── events/       # typed event schema (shared)
 │   ├── ingest/       # M1 mici Connect/SSH/fixture → event bus
-│   ├── shards|teacher|student|export|eval|deploy/  # stubs
+│   ├── shards/       # M2 pack → event bus
+│   ├── teacher|student|export|eval|deploy/  # stubs
 ├── configs/default.yaml
 └── docs/ARCHITECTURE.md
 ```
@@ -95,14 +106,15 @@ Distillery-Expo/
 
 | Included now | Stubbed for later |
 |--------------|-------------------|
-| Event schema + bus | Shard packing jobs (Craig) |
-| **mici ingest** (Connect / SSH / fixture) | Teacher on 7090 XT |
-| `GET /routes` + `POST /jobs/ingest` + WS | Student train (tinygrad) |
+| Event schema + bus | Teacher on 7090 XT |
+| **mici ingest** (Connect / SSH / fixture) | Student train (tinygrad) |
+| `GET /routes` + `POST /jobs/ingest` + `POST /jobs/shard` + WS | Student train (tinygrad) |
 | Demo job with staged events | Real export / ONNX / QCOM |
 | FastAPI + WS streaming | Eval harness + real flash |
 | Rich dark Expo GUI + **Shard pane UX** | |
 | `dex routes` / `dex ingest` / `dex demo` | |
 | Gated flash UI confirm (unchanged) | |
+| `./scripts/dev-up` one-command launcher | |
 
 See `docs/ARCHITECTURE.md` for M1 ingest notes.
 

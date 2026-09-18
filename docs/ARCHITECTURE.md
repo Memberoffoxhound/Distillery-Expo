@@ -32,7 +32,7 @@ Expo GUI is the primary surface. `dex` is the engine CLI. The API is the shared 
 └─────────────────────────────────────────────────────────────┘
          │         │         │         │         │
     ingest★   shards    teacher   student   export/eval/deploy
-   (M1 real)  (stub)    (stub)    (stub)       (stubs)
+   (M1 real)  (M2 real)  (stub)    (stub)       (stubs)
 ```
 
 ## M1 — mici ingest thin slice
@@ -163,7 +163,8 @@ M0 demo background task still available (`POST /jobs/demo`). M1 adds ingest-only
 
 - `packages/events` — shared schema (API + workers)
 - `packages/ingest` — **M1 real package** (Connect / SSH / fixture → bus)
-- `packages/shards|teacher|student|export|eval|deploy` — stub READMEs defining v1 scope
+- `packages/shards` — **M2 real package** (pack → bus)
+- `packages/teacher|student|export|eval|deploy` — stub READMEs defining v1 scope
 
 ## Apps
 
@@ -181,3 +182,40 @@ M0 demo background task still available (`POST /jobs/demo`). M1 adds ingest-only
 - Weakening flash gating
 - Real AMD ROCm / tinygrad training loops
 - Chestnut or any non-Cinque teacher path
+
+## M2 — shards pack + one-command launcher
+
+**Goal:** A simple user runs `./scripts/dev-up`, lands in Expo, pulls a mici route, then packs shards — with truthful `stage=shard` progress on the same WS bus. No CLI required for the Expo path.
+
+### Shard pack
+
+- Package: `packages/shards` (`distillery_shards`)
+- Packs ingested route segments into training shard descriptors (frame windows, label + teacher soft-target placeholders)
+- Fixture/offline path when no Connect/SSH/ingest artifacts — labeled `meta.fixture` (mirrors ingest)
+- API: `POST /jobs/shard` `{ route_id?, source? }` → events on existing `/ws/jobs/{id}`
+- CLI (secondary): `dex shards` / `dex pack`
+
+### Event shapes (Expo / Jony)
+
+Stage / progress / metric / decision / log same as M1. Sample meta for shard binding:
+
+| Field | Meaning |
+|-------|---------|
+| `shard_id` | e.g. `shard_000` |
+| `route_id` | parent route |
+| `frame_count` | frames in window |
+| `size_bytes` | estimated packed size |
+| `status` | `ready` / … |
+| `fixture` | `true` when offline fixture |
+
+Metric `shards_written` matches the M0 demo so the Shard pane binds without UI changes.
+
+### One-command launcher
+
+`scripts/dev-up` — POSIX `sh`, Fedora-first, portable (`python3` / `node` / `npm` only). Creates `.venv`, installs editable Python + web deps if missing, starts API+web, prints Expo URL + next step (Pull mici route → Pack shards). macOS follow-on: same script; brew notes in comments only.
+
+### Non-goals (M2)
+
+- Teacher / train / export / eval / flash implementation
+- Weakening flash gating
+- Chestnut / non-Cinque teacher path

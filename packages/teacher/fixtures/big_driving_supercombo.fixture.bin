@@ -1,0 +1,7 @@
+DISTILLERY_FIXTURE_TEACHER
+name=big_driving_supercombo
+source=fixture
+live=false
+licensed=false
+note=Offline labeled fixture - not commaai/openpilot master live weights.
+No Chestnut.

@@ -25,6 +25,9 @@ def test_write_onnx_creates_artifact(tmp_path: Path):
     assert onnx_path.stat().st_size > 0
     assert sidecar.is_file()
     assert result["io"]["contract"] == "stock-modelV2"
+    assert result["artifact_tag"] == "fixture"
+    assert result["eval_passed"] is False
+    assert result["licensed"] is False
 
 
 def test_export_pipeline_emits_artifact():
@@ -45,6 +48,8 @@ def test_export_pipeline_emits_artifact():
         )
         assert Path(result["onnx_path"]).is_file()
         assert Path(result["sidecar_path"]).is_file()
+        assert result.get("eval_passed") is False
+        assert result.get("artifact_tag") in ("fixture", "live")
 
     asyncio.run(_run())
 
@@ -53,3 +58,4 @@ def test_export_pipeline_emits_artifact():
     samples = [e for e in parsed if e.kind == EventKind.sample]
     assert samples
     assert samples[0].payload.get("meta", {}).get("io_contract") == "stock-modelV2"
+    assert samples[0].payload.get("meta", {}).get("eval_passed") is False

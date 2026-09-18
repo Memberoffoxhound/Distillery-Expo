@@ -18,7 +18,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["ruff", "pytest"]
+export = ["onnx>=1.14", "numpy>=1.24"]
+dev = ["ruff", "pytest", "onnx>=1.14", "numpy>=1.24"]
 
 [project.scripts]
 dex = "dex.cli:main"

@@ -124,8 +124,19 @@ async def run_export_pipeline(
             "onnx_path": str(cfg.output_dir / cfg.artifact_name),
             "sidecar_path": str(cfg.output_dir / (cfg.artifact_name + ".json")),
             "onnx_package": False,
+            "artifact_tag": "fixture",
+            "live": False,
+            "licensed": False,
+            "eval_passed": False,
             "io": MODEL_V2_IO,
-            "meta": {"dry_run": True, "io": MODEL_V2_IO},
+            "meta": {
+                "dry_run": True,
+                "io": MODEL_V2_IO,
+                "artifact_tag": "fixture",
+                "live": False,
+                "licensed": False,
+                "eval_passed": False,
+            },
         }
 
     await progress(0.85, "write artifact")
@@ -145,6 +156,10 @@ async def run_export_pipeline(
                     "format": result.get("meta", {}).get("format"),
                     "io_contract": "stock-modelV2",
                     "io": MODEL_V2_IO,
+                    "artifact_tag": result.get("artifact_tag") or result.get("meta", {}).get("artifact_tag", "fixture"),
+                    "live": bool(result.get("live", False)),
+                    "licensed": False,
+                    "eval_passed": False,
                 },
             ),
             stage=stage,

@@ -14,9 +14,9 @@
 #                           curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh
 #   scripts/dev-up        = day-to-day after toolchain is present
 #                           (venv + pip + npm + launch). On Fedora/Arch/SteamOS,
-#                           if python3/node/npm are missing, auto-installs via
+#                           if python3/node/npm/adb are missing, auto-installs via
 #                           dnf or pacman (with pacman-key --init/--populate)
-#                           instead of only dying.
+#                           or Homebrew (android-platform-tools) instead of only dying.
 #
 # Usage (from repo root):
 #   ./scripts/dev-up
@@ -126,7 +126,7 @@ On Steam Deck Desktop, fix the keyring, then re-run ./scripts/dev-up (or ./scrip
   # if these keyrings exist on your Deck:
   sudo pacman-key --populate steamos
   sudo pacman-key --populate holo
-  sudo pacman -Sy --needed python python-pip python-virtualenv nodejs npm
+  sudo pacman -Sy --needed python python-pip python-virtualenv nodejs npm android-tools
 
 Prefer fixing pacman. If you must unblock without it: install Node LTS
 (https://nodejs.org) and Python 3 with venv another way, then re-run."
@@ -212,6 +212,8 @@ ensure_cmd() {
   cmd=$1
   dnf_pkgs=$2
   pacman_pkgs=$3
+  # Optional 4th arg: Homebrew formula(s). Empty → macOS falls through to die with python/node hint.
+  brew_pkgs=${4:-}
   if have_cmd "$cmd"; then
     return 0
   fi
@@ -246,7 +248,17 @@ On Steam Deck: sudo steamos-readonly disable && sudo pacman-key --init && sudo p
   fi
 
   if [ "$OS" = "macos" ]; then
-    die "missing \`$cmd\`. Install with Homebrew (brew install python node), or run ./scripts/bootstrap.sh"
+    if have_cmd brew && [ -n "$brew_pkgs" ]; then
+      info "missing \`$cmd\` — installing via Homebrew: $brew_pkgs"
+      # shellcheck disable=SC2086
+      brew install $brew_pkgs
+      if have_cmd "$cmd"; then
+        info "installed \`$cmd\` OK"
+        return 0
+      fi
+      die "still missing \`$cmd\` after brew install. Try: ./scripts/bootstrap.sh"
+    fi
+    die "missing \`$cmd\`. Install with Homebrew (brew install ${brew_pkgs:-python node}), or run ./scripts/bootstrap.sh"
   fi
 
   die "missing \`$cmd\` and no supported package manager found.
@@ -256,7 +268,7 @@ On Steam Deck: sudo steamos-readonly disable && sudo pacman-key --init && sudo p
                    sudo pacman-key --init
                    sudo pacman-key --populate archlinux
                    sudo pacman -Sy --needed $pacman_pkgs
-  macOS:           brew install python node
+  macOS:           brew install ${brew_pkgs:-python node}
 
 Or bare-machine one-shot: ./scripts/bootstrap.sh
   (public one-liner: curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh)"
@@ -270,12 +282,61 @@ info ""
 # Linux/Fedora:  sudo dnf install python3 python3-pip nodejs npm
 # Arch/SteamOS:  sudo pacman-key --init/--populate then pacman -Sy --needed …
 # macOS:         brew install python node
+
+# ADB — same packages as bootstrap; soft-warn on unsupported Linux (no dnf/pacman)
+# so Expo still lands. Fedora/Arch/macOS install hard (die if still missing).
+ensure_adb() {
+  if have_cmd adb; then
+    info "adb already present: $(adb version 2>/dev/null | head -n 1 || echo on PATH)"
+    return 0
+  fi
+
+  info "missing \`adb\` — installing (Fedora/Arch: android-tools · macOS: android-platform-tools)"
+
+  if [ "$OS" = "linux" ] && (is_fedora_like || have_cmd dnf || have_cmd microdnf); then
+    DNF=dnf
+    have_cmd dnf || DNF=microdnf
+    info "installing via $DNF: android-tools"
+    info "(may prompt for sudo password; for bare machines prefer ./scripts/bootstrap.sh)"
+    if have_cmd sudo; then
+      sudo "$DNF" install -y android-tools
+    else
+      "$DNF" install -y android-tools
+    fi
+  elif [ "$OS" = "linux" ] && (is_arch_like || have_cmd pacman); then
+    info "installing via pacman: android-tools"
+    pacman_install "android-tools"
+  elif [ "$OS" = "macos" ]; then
+    if have_cmd brew; then
+      info "installing via Homebrew: android-platform-tools"
+      brew install android-platform-tools
+    else
+      die "missing \`adb\`. Install Homebrew from https://brew.sh then: brew install android-platform-tools"
+    fi
+  else
+    warn "adb not found and no dnf/pacman/brew — install android-tools (or android-platform-tools) manually"
+    warn "Expo will still start; ADB discovery reports not_on_path until adb is installed"
+    return 0
+  fi
+
+  if have_cmd adb; then
+    info "installed \`adb\` OK: $(adb version 2>/dev/null | head -n 1 || echo installed)"
+    return 0
+  fi
+  die "still missing \`adb\` after install.
+  Fedora / RHEL:   sudo dnf install -y android-tools
+  Arch / SteamOS:  sudo pacman -Sy --needed android-tools
+  macOS:           brew install android-platform-tools
+Or: ./scripts/bootstrap.sh"
+}
+
 ensure_cmd python3 "python3 python3-pip" "python python-pip python-virtualenv"
 ensure_cmd node "nodejs npm" "nodejs npm"
 ensure_cmd npm "npm" "npm"
+ensure_adb
 
 PY_VER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
-info "python3 $PY_VER · node $(node -v) · npm $(npm -v)"
+info "python3 $PY_VER · node $(node -v) · npm $(npm -v) · adb $(command -v adb >/dev/null && adb version 2>/dev/null | head -n1 || echo missing)"
 
 # --- Python venv + editable install ---
 if [ ! -d "$VENV_DIR" ]; then

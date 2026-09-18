@@ -219,3 +219,19 @@ Metric `shards_written` matches the M0 demo so the Shard pane binds without UI c
 - Teacher / train / export / eval / flash implementation
 - Weakening flash gating
 - Chestnut / non-Cinque teacher path
+
+
+## Ship — teach → train → export → eval → gated flash
+
+API wires Graig packages:
+
+```python
+from distillery_teacher import run_teach_pipeline
+from distillery_student import run_train_pipeline
+from distillery_export import run_export_pipeline
+from distillery_eval import run_eval_pipeline
+```
+
+`apps/api/ml_adapters.py` resolves those entrypoints; temporary fixture fallbacks stay in the API layer only and emit `live=false`.
+
+**Flash gate (Phil/Bruce):** `job.eval_passed` defaults `False`. Confirm requires `eval_passed is True` **and** explicit confirm. Never auto-write to mici. Eval always emits real scorecard numbers; fixture/stub is not licensed to unlock flash.

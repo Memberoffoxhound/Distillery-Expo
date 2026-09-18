@@ -12,14 +12,37 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from api.demo_runner import STAGES, run_demo_pipeline
+from api.ml_adapters import (
+    backend_status,
+    coerce_eval_passed,
+    resolve_eval,
+    resolve_export,
+    resolve_flash,
+    resolve_teach,
+    resolve_train,
+)
 from distillery_ingest import load_ingest_config, run_ingest_pipeline
 from distillery_ingest.resolve import list_routes as ingest_list_routes
 from distillery_shards import run_shard_pipeline
 
+import inspect
+
+
+async def _call_stage(runner, job_id: str, emit, **kwargs):
+    """Pass only kwargs accepted by Graig (or fixture) runner signature."""
+    sig = inspect.signature(runner)
+    accepted = set(sig.parameters) - {"job_id", "emit"}
+    # Prefer **varkw if present
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return await runner(job_id, emit, **kwargs)
+    filtered = {k: v for k, v in kwargs.items() if k in accepted}
+    return await runner(job_id, emit, **filtered)
+
+
 app = FastAPI(
     title="Distillery Expo API",
-    version="0.3.0",
-    description="tinygrad distill control room — M2 shard pack + M1 mici ingest + M0 demo",
+    version="0.4.0",
+    description="tinygrad distill control room — teach→train→export→eval + gated flash",
 )
 
 app.add_middleware(
@@ -39,6 +62,8 @@ class JobRecord(BaseModel):
     events: list[dict[str, Any]] = Field(default_factory=list)
     flash_confirmed: bool = False
     route_id: str | None = None
+    eval_passed: bool = False
+    onnx_path: str | None = None
 
 
 class JobSummary(BaseModel):
@@ -58,6 +83,36 @@ class IngestJobRequest(BaseModel):
 class ShardJobRequest(BaseModel):
     route_id: str | None = None
     source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
+
+
+class TeachJobRequest(BaseModel):
+    route_id: str | None = None
+    source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
+
+
+class TrainJobRequest(BaseModel):
+    route_id: str | None = None
+    source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
+
+
+class ExportJobRequest(BaseModel):
+    route_id: str | None = None
+    checkpoint_path: str | None = None
+
+
+class EvalJobRequest(BaseModel):
+    route_id: str | None = None
+    onnx_path: str | None = None
+    force_fail: bool = False
+    # Test-only: fixture stub defaults to FAIL (not licensed). force_pass unlocks gate intentionally.
+    force_pass: bool = False
+
+
+class PipelineJobRequest(BaseModel):
+    """Sequential teach→train→export→eval→(gated)flash for Expo simple-user path."""
+    route_id: str | None = None
+    source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
+    include_flash: bool = True
 
 
 # In-memory job store
@@ -87,6 +142,14 @@ async def _broadcast(job_id: str, event: dict[str, Any]) -> None:
         return
     job.events.append(event)
     # Update job status from stage events
+    # Phil gate: only explicit eval_pass==1.0 sets True (never infer empty pass)
+    if event.get("kind") == "metric" and event.get("stage") == "eval":
+        payload = event.get("payload") or {}
+        if payload.get("name") in ("eval_pass", "eval_passed"):
+            try:
+                job.eval_passed = float(payload.get("value") or 0) >= 1.0
+            except (TypeError, ValueError):
+                job.eval_passed = False
     if event.get("kind") == "stage":
         payload = event.get("payload") or {}
         st = payload.get("status")
@@ -100,6 +163,14 @@ async def _broadcast(job_id: str, event: dict[str, Any]) -> None:
         elif job.kind == "ingest" and name == "ingest" and st == "done":
             job.status = "done"
         elif job.kind == "shard" and name == "shard" and st == "done":
+            job.status = "done"
+        elif job.kind == "teach" and name == "teach" and st == "done":
+            job.status = "done"
+        elif job.kind == "train" and name == "train" and st == "done":
+            job.status = "done"
+        elif job.kind == "export" and name == "export" and st == "done":
+            job.status = "done"
+        elif job.kind == "eval" and name == "eval" and st == "done":
             job.status = "done"
         elif st == "running" and job.status == "pending":
             job.status = "running"
@@ -260,9 +331,357 @@ async def _run_shard_job(
         )
 
 
+
+async def _run_teach_job(
+    job_id: str,
+    *,
+    route_id: str | None = None,
+    prefer: str = "auto",
+) -> None:
+    job = _jobs[job_id]
+    job.status = "running"
+
+    async def emit(event: dict[str, Any]) -> None:
+        await _broadcast(job_id, event)
+
+    try:
+        result = await _call_stage(
+            resolve_teach(),
+            job_id,
+            emit,
+            route_id=route_id,
+            prefer=prefer if prefer in ("auto", "live", "fixture") else "auto",
+            tick=0.08,
+        )
+        if route_id:
+            job.route_id = route_id
+        if job.status not in ("done", "failed"):
+            job.status = "done"
+        _ = result
+    except Exception as exc:  # noqa: BLE001
+        job.status = "failed"
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "log",
+                "stage": "teach",
+                "payload": {
+                    "level": "error",
+                    "message": f"Teach failed: {exc}",
+                    "source": "teach",
+                },
+            },
+        )
+
+
+async def _run_train_job(
+    job_id: str,
+    *,
+    route_id: str | None = None,
+    prefer: str = "auto",
+) -> None:
+    job = _jobs[job_id]
+    job.status = "running"
+
+    async def emit(event: dict[str, Any]) -> None:
+        await _broadcast(job_id, event)
+
+    try:
+        result = await _call_stage(
+            resolve_train(),
+            job_id,
+            emit,
+            route_id=route_id,
+            prefer=prefer if prefer in ("auto", "live", "fixture") else "auto",
+            tick=0.08,
+        )
+        if route_id:
+            job.route_id = route_id
+        if job.status not in ("done", "failed"):
+            job.status = "done"
+        _ = result
+    except Exception as exc:  # noqa: BLE001
+        job.status = "failed"
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "log",
+                "stage": "train",
+                "payload": {
+                    "level": "error",
+                    "message": f"Train failed: {exc}",
+                    "source": "train",
+                },
+            },
+        )
+
+
+async def _run_export_job(
+    job_id: str,
+    *,
+    route_id: str | None = None,
+    checkpoint_path: str | None = None,
+) -> None:
+    job = _jobs[job_id]
+    job.status = "running"
+
+    async def emit(event: dict[str, Any]) -> None:
+        await _broadcast(job_id, event)
+
+    try:
+        result = await _call_stage(
+            resolve_export(),
+            job_id,
+            emit,
+            route_id=route_id,
+            checkpoint_path=checkpoint_path,
+            tick=0.08,
+        )
+        onnx = getattr(result, "onnx_path", None)
+        if isinstance(result, dict):
+            onnx = result.get("onnx_path", onnx)
+        if onnx:
+            job.onnx_path = str(onnx)
+        if job.status not in ("done", "failed"):
+            job.status = "done"
+    except Exception as exc:  # noqa: BLE001
+        job.status = "failed"
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "log",
+                "stage": "export",
+                "payload": {
+                    "level": "error",
+                    "message": f"Export failed: {exc}",
+                    "source": "export",
+                },
+            },
+        )
+
+
+async def _run_eval_job(
+    job_id: str,
+    *,
+    route_id: str | None = None,
+    onnx_path: str | None = None,
+    force_fail: bool = False,
+    force_pass: bool = False,
+) -> None:
+    job = _jobs[job_id]
+    job.status = "running"
+
+    async def emit(event: dict[str, Any]) -> None:
+        await _broadcast(job_id, event)
+
+    try:
+        result = await _call_stage(
+            resolve_eval(),
+            job_id,
+            emit,
+            route_id=route_id,
+            onnx_path=onnx_path or job.onnx_path,
+            force_fail=force_fail,
+            force_pass=force_pass,
+            tick=0.08,
+        )
+        job.eval_passed = coerce_eval_passed(result)
+        if job.status not in ("done", "failed"):
+            job.status = "done"
+    except Exception as exc:  # noqa: BLE001
+        job.status = "failed"
+        job.eval_passed = False
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "log",
+                "stage": "eval",
+                "payload": {
+                    "level": "error",
+                    "message": f"Eval failed: {exc}",
+                    "source": "eval",
+                },
+            },
+        )
+
+
+async def _run_pipeline_job(
+    job_id: str,
+    *,
+    route_id: str | None = None,
+    prefer: str = "auto",
+    include_flash: bool = True,
+) -> None:
+    """teach → train → export → eval → gated flash (confirm required; never auto-write)."""
+    job = _jobs[job_id]
+    job.status = "running"
+
+    async def emit(event: dict[str, Any]) -> None:
+        await _broadcast(job_id, event)
+
+    try:
+        prefer_ml = prefer if prefer in ("auto", "live", "fixture") else "auto"
+        await _call_stage(
+            resolve_teach(), job_id, emit, route_id=route_id, prefer=prefer_ml, tick=0.06
+        )
+        await _call_stage(
+            resolve_train(), job_id, emit, route_id=route_id, prefer=prefer_ml, tick=0.06
+        )
+        export_result = await _call_stage(
+            resolve_export(), job_id, emit, route_id=route_id, tick=0.06
+        )
+        onnx = getattr(export_result, "onnx_path", None)
+        if isinstance(export_result, dict):
+            onnx = export_result.get("onnx_path", onnx)
+        if onnx:
+            job.onnx_path = str(onnx)
+
+        eval_result = await _call_stage(
+            resolve_eval(),
+            job_id,
+            emit,
+            route_id=route_id,
+            onnx_path=job.onnx_path,
+            tick=0.06,
+        )
+        job.eval_passed = coerce_eval_passed(eval_result)
+
+        if not include_flash:
+            if job.status not in ("done", "failed", "gated"):
+                job.status = "done"
+            return
+
+        # Gate flash: only enter gated state when eval passed
+        from distillery_events import (
+            DecisionPayload,
+            EventKind,
+            LogPayload,
+            StageName,
+            StagePayload,
+            make_event,
+        )
+
+        stage = StageName.flash
+        if not job.eval_passed:
+            await emit(
+                make_event(
+                    job_id,
+                    EventKind.log,
+                    LogPayload(
+                        level="warn",
+                        message="Flash blocked — eval did not pass (no device write)",
+                        source="flash",
+                    ),
+                    stage=stage,
+                ).to_json_dict()
+            )
+            await emit(
+                make_event(
+                    job_id,
+                    EventKind.stage,
+                    StagePayload(
+                        name=stage,
+                        status="skipped",
+                        detail="Blocked: eval_passed=false",
+                    ),
+                    stage=stage,
+                ).to_json_dict()
+            )
+            job.status = "done"
+            return
+
+        await emit(
+            make_event(
+                job_id,
+                EventKind.stage,
+                StagePayload(
+                    name=stage,
+                    status="gated",
+                    detail="Awaiting explicit flash confirm (eval passed)",
+                ),
+                stage=stage,
+            ).to_json_dict()
+        )
+        await emit(
+            make_event(
+                job_id,
+                EventKind.decision,
+                DecisionPayload(
+                    title="Flash policy",
+                    rationale=(
+                        "Design lock: flash is always gated. Confirm only after eval_passed. "
+                        "Never auto-write to device."
+                    ),
+                    options_considered=[
+                        "wait for confirm",
+                        "auto-flash (forbidden)",
+                        "abort",
+                    ],
+                    chosen="wait for confirm",
+                    confidence=1.0,
+                ),
+                stage=stage,
+            ).to_json_dict()
+        )
+        await emit(
+            make_event(
+                job_id,
+                EventKind.log,
+                LogPayload(
+                    level="warn",
+                    message="FLASH GATED — confirm required; eval_passed=true",
+                    source="flash",
+                ),
+                stage=stage,
+            ).to_json_dict()
+        )
+
+        confirmed = await _wait_flash(job_id)
+        # Pipeline never auto-writes on timeout without confirm flag
+        if confirmed and job.flash_confirmed:
+            await _call_stage(resolve_flash(), job_id, emit, confirmed=True, tick=0.06)
+        else:
+            await _call_stage(resolve_flash(), job_id, emit, confirmed=False, tick=0.0)
+        if job.status not in ("done", "failed"):
+            job.status = "done"
+    except Exception as exc:  # noqa: BLE001
+        job.status = "failed"
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "log",
+                "stage": None,
+                "payload": {
+                    "level": "error",
+                    "message": f"Pipeline failed: {exc}",
+                    "source": "api",
+                },
+            },
+        )
+
+
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "distillery-expo"}
+async def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "service": "distillery-expo",
+        "ml_backends": backend_status(),
+    }
 
 
 @app.get("/stages")
@@ -373,6 +792,141 @@ async def start_shard(
     return _summary(rec)
 
 
+@app.post("/jobs/teach", response_model=JobSummary)
+async def start_teach(
+    background_tasks: BackgroundTasks,
+    body: TeachJobRequest | None = None,
+) -> JobSummary:
+    """Start teach job (Graig teacher or labeled fixture). Events on /ws/jobs/{id}."""
+    body = body or TeachJobRequest()
+    job_id = str(uuid4())
+    rec = JobRecord(
+        id=job_id,
+        kind="teach",
+        status="pending",
+        created_at=_now(),
+        route_id=body.route_id,
+    )
+    _jobs[job_id] = rec
+    _subscribers[job_id] = []
+    background_tasks.add_task(
+        _run_teach_job,
+        job_id,
+        route_id=body.route_id,
+        prefer=body.source,
+    )
+    return _summary(rec)
+
+
+@app.post("/jobs/train", response_model=JobSummary)
+async def start_train(
+    background_tasks: BackgroundTasks,
+    body: TrainJobRequest | None = None,
+) -> JobSummary:
+    """Start train job (Graig student or labeled fixture). Events on /ws/jobs/{id}."""
+    body = body or TrainJobRequest()
+    job_id = str(uuid4())
+    rec = JobRecord(
+        id=job_id,
+        kind="train",
+        status="pending",
+        created_at=_now(),
+        route_id=body.route_id,
+    )
+    _jobs[job_id] = rec
+    _subscribers[job_id] = []
+    background_tasks.add_task(
+        _run_train_job,
+        job_id,
+        route_id=body.route_id,
+        prefer=body.source,
+    )
+    return _summary(rec)
+
+
+@app.post("/jobs/export", response_model=JobSummary)
+async def start_export(
+    background_tasks: BackgroundTasks,
+    body: ExportJobRequest | None = None,
+) -> JobSummary:
+    """Export mici-fit ONNX student (Graig export or labeled fixture)."""
+    body = body or ExportJobRequest()
+    job_id = str(uuid4())
+    rec = JobRecord(
+        id=job_id,
+        kind="export",
+        status="pending",
+        created_at=_now(),
+        route_id=body.route_id,
+    )
+    _jobs[job_id] = rec
+    _subscribers[job_id] = []
+    background_tasks.add_task(
+        _run_export_job,
+        job_id,
+        route_id=body.route_id,
+        checkpoint_path=body.checkpoint_path,
+    )
+    return _summary(rec)
+
+
+@app.post("/jobs/eval", response_model=JobSummary)
+async def start_eval(
+    background_tasks: BackgroundTasks,
+    body: EvalJobRequest | None = None,
+) -> JobSummary:
+    """Offline scorecard; sets job.eval_passed for flash gate."""
+    body = body or EvalJobRequest()
+    job_id = str(uuid4())
+    rec = JobRecord(
+        id=job_id,
+        kind="eval",
+        status="pending",
+        created_at=_now(),
+        route_id=body.route_id,
+        onnx_path=body.onnx_path,
+    )
+    _jobs[job_id] = rec
+    _subscribers[job_id] = []
+    background_tasks.add_task(
+        _run_eval_job,
+        job_id,
+        route_id=body.route_id,
+        onnx_path=body.onnx_path,
+        force_fail=body.force_fail,
+        force_pass=body.force_pass,
+    )
+    return _summary(rec)
+
+
+@app.post("/jobs/pipeline", response_model=JobSummary)
+async def start_pipeline(
+    background_tasks: BackgroundTasks,
+    body: PipelineJobRequest | None = None,
+) -> JobSummary:
+    """Sequential teach→train→export→eval→gated flash for Expo simple-user path."""
+    body = body or PipelineJobRequest()
+    job_id = str(uuid4())
+    rec = JobRecord(
+        id=job_id,
+        kind="pipeline",
+        status="pending",
+        created_at=_now(),
+        route_id=body.route_id,
+    )
+    _jobs[job_id] = rec
+    _subscribers[job_id] = []
+    _flash_events[job_id] = asyncio.Event()
+    background_tasks.add_task(
+        _run_pipeline_job,
+        job_id,
+        route_id=body.route_id,
+        prefer=body.source,
+        include_flash=body.include_flash,
+    )
+    return _summary(rec)
+
+
 @app.get("/jobs/{job_id}", response_model=JobSummary)
 async def get_job(job_id: str) -> JobSummary:
     job = _jobs.get(job_id)
@@ -386,7 +940,13 @@ async def get_events(job_id: str) -> dict[str, Any]:
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(404, "job not found")
-    return {"job_id": job_id, "events": job.events}
+    return {
+        "job_id": job_id,
+        "events": job.events,
+        "eval_passed": job.eval_passed,
+        "onnx_path": job.onnx_path,
+        "flash_confirmed": job.flash_confirmed,
+    }
 
 
 class FlashConfirm(BaseModel):
@@ -395,15 +955,34 @@ class FlashConfirm(BaseModel):
 
 @app.post("/jobs/{job_id}/flash/confirm")
 async def confirm_flash(job_id: str, body: FlashConfirm) -> dict[str, Any]:
+    """Explicit confirm only. Rejected unless this job reported eval_passed."""
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(404, "job not found")
     if not body.confirm:
         return {"ok": False, "message": "confirm=false ignored"}
+    if not job.eval_passed:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "ok": False,
+                "blocked": True,
+                "reason": "eval_gate",
+                "message": "Flash confirm rejected — eval has not passed for this job",
+                "eval_passed": False,
+            },
+        )
     job.flash_confirmed = True
     ev = _flash_events.setdefault(job_id, asyncio.Event())
     ev.set()
-    return {"ok": True, "job_id": job_id, "flash_confirmed": True}
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "flash_confirmed": True,
+        "eval_passed": True,
+        "device_write": False,
+        "note": "Confirm accepted; flash path is simulated unless a live deploy backend is wired",
+    }
 
 
 @app.websocket("/ws/jobs/{job_id}")
@@ -443,22 +1022,38 @@ async def ws_jobs(websocket: WebSocket, job_id: str) -> None:
                 try:
                     msg = get_msg.result()
                     if isinstance(msg, dict) and msg.get("type") == "flash_confirm":
-                        job.flash_confirmed = True
-                        _flash_events.setdefault(job_id, asyncio.Event()).set()
-                        await websocket.send_json(
-                            {
-                                "id": str(uuid4()),
-                                "ts": _now(),
-                                "job_id": job_id,
-                                "kind": "log",
-                                "stage": "flash",
-                                "payload": {
-                                    "level": "info",
-                                    "message": "Flash confirmed by operator",
-                                    "source": "flash",
-                                },
-                            }
-                        )
+                        if not job.eval_passed:
+                            await websocket.send_json(
+                                {
+                                    "id": str(uuid4()),
+                                    "ts": _now(),
+                                    "job_id": job_id,
+                                    "kind": "log",
+                                    "stage": "flash",
+                                    "payload": {
+                                        "level": "warn",
+                                        "message": "Flash confirm blocked — eval has not passed",
+                                        "source": "flash",
+                                    },
+                                }
+                            )
+                        else:
+                            job.flash_confirmed = True
+                            _flash_events.setdefault(job_id, asyncio.Event()).set()
+                            await websocket.send_json(
+                                {
+                                    "id": str(uuid4()),
+                                    "ts": _now(),
+                                    "job_id": job_id,
+                                    "kind": "log",
+                                    "stage": "flash",
+                                    "payload": {
+                                        "level": "info",
+                                        "message": "Flash confirmed by operator",
+                                        "source": "flash",
+                                    },
+                                }
+                            )
                 except WebSocketDisconnect:
                     break
                 except Exception:  # noqa: BLE001

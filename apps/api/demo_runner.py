@@ -266,6 +266,7 @@ async def run_demo_pipeline(
         await metric(s, name, val, series="eval")
         await asyncio.sleep(tick * 0.5)
     await progress(s, 1.0, "scorecard ready")
+    await metric(s, "eval_pass", 1.0, series="eval")
     await log(s, "Eval PASS — flash gate unlocked (awaiting confirm)")
     await stage_status(s, "done")
 

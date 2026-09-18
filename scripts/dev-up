@@ -11,7 +11,7 @@
 # Usage (from repo root):
 #   ./scripts/dev-up
 #
-# Lands you at http://127.0.0.1:5173 — then Pull mici route → Pack shards.
+# Lands you at http://127.0.0.1:5173 — then Pull mici route → Pack shards → Teach → Train → Export → Eval → gated Flash
 
 set -eu
 
@@ -144,7 +144,8 @@ info ""
 info "Simple-user next steps:"
 info "  1. Open the Expo URL above"
 info "  2. Pull mici route  (ingest — fixture if no device creds)"
-info "  3. Pack shards      (POST /jobs/shard or Pack shards in UI)"
+info "  3. Pack shards → Teach → Train → Export → Eval → gated Flash"
+info "  4. Flash confirm stays locked until eval_passed (never auto-write)"
 info ""
 info "Logs:  .cache/dev-up-api.log  ·  .cache/dev-up-web.log"
 info "Stop:  kill \$(cat .cache/dev-up-api.pid) \$(cat .cache/dev-up-web.pid)"

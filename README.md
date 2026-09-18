@@ -102,6 +102,23 @@ Distillery-Expo/
 └── docs/ARCHITECTURE.md
 ```
 
+## Ship path (teach → train → export → eval → gated flash)
+
+Expo primary. One-command: `./scripts/dev-up` then use Expo or:
+
+| Method | Path | Notes |
+|--------|------|-------|
+| `POST` | `/jobs/teach` | Soft-labels on bus (`stage=teach`) — Graig teacher or labeled fixture |
+| `POST` | `/jobs/train` | `train_loss` / progress (`stage=train`) |
+| `POST` | `/jobs/export` | ONNX path in logs/metrics (`stage=export`) |
+| `POST` | `/jobs/eval` | Real scorecard metrics; `eval_passed` defaults **false** for fixture |
+| `POST` | `/jobs/pipeline` | Sequential teach→…→eval→**gated** flash |
+| `POST` | `/jobs/{id}/flash/confirm` | **403** unless `eval_passed`; never auto-writes device |
+
+Flash stays locked until eval clears **and** operator confirms. Fixture/offline paths are labeled `live=false` — no greenwashed pass.
+
+WS: `/ws/jobs/{id}` (same bus as ingest/shard).
+
 ## M1 includes / stubbed next
 
 | Included now | Stubbed for later |

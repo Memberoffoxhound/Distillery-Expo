@@ -14,18 +14,22 @@ from typing import Any
 
 # Known master-era stock teacher artifacts (post combined-supercombo era).
 # Paths relative to commaai/openpilot repo root on branch ``master``.
+BIG_TEACHER_NAME = "big_driving_supercombo"
+BIG_TEACHER_REF = "selfdrive/modeld/models/big_driving_supercombo.onnx"
+
 _KNOWN_MASTER_TEACHERS: list[dict[str, str]] = [
-    {
-        "name": "driving_supercombo",
-        "version": "master",
-        "ref": "selfdrive/modeld/models/driving_supercombo.onnx",
-        "role": "stock",
-    },
     {
         "name": "big_driving_supercombo",
         "version": "master",
         "ref": "selfdrive/modeld/models/big_driving_supercombo.onnx",
         "role": "big",
+    },
+    # Listed for catalog transparency only — NEVER the default / never a silent fallback.
+    {
+        "name": "driving_supercombo",
+        "version": "master",
+        "ref": "selfdrive/modeld/models/driving_supercombo.onnx",
+        "role": "stock",
     },
 ]
 
@@ -53,9 +57,10 @@ def _fixture_teachers(*, reason: str) -> list[dict[str, Any]]:
                 "artifact_ref": known["ref"],
                 "artifact_url": None,
                 "live": False,
-                "teacher": "Cinque/supercombo",
+                "teacher": known["name"],
                 "role": known["role"],
-                "detail": f"fixture teacher — {reason} (live=false / not licensed; no Chestnut)",
+                "label": f"fixture · {known['name']}",
+                "detail": f"fixture teacher — {reason} (live=false / not licensed; big preferred; no Chestnut)",
             }
         )
     # Always include the named Cinque/supercombo alias used elsewhere in Distillery
@@ -109,6 +114,8 @@ def _entry_from_github(entry: dict[str, Any]) -> dict[str, Any] | None:
     download = entry.get("download_url") or (_RAW_BASE + path)
     stem = name[: -len(".onnx")]
     role = "big" if stem.startswith("big_") else "stock"
+    label_name = stem
+    live_label = f"comma master · {label_name}"
     return {
         "name": stem,
         "version": "master",
@@ -119,8 +126,9 @@ def _entry_from_github(entry: dict[str, Any]) -> dict[str, Any] | None:
         "sha": entry.get("sha"),
         "size": entry.get("size"),
         "live": True,
-        "teacher": "Cinque/supercombo" if "supercombo" in lower else stem,
+        "teacher": stem,
         "role": role,
+        "label": live_label,
         "detail": "listed from commaai/openpilot master models/",
     }
 
@@ -167,15 +175,32 @@ def list_comma_master_teachers(
                     "artifact_url": _RAW_BASE + known["ref"],
                     "html_url": _BLOB_BASE + known["ref"],
                     "live": True,
-                    "teacher": "Cinque/supercombo",
+                    "teacher": known["name"],
                     "role": known["role"],
+                    "label": f"comma master · {known['name']}",
                     "detail": "known master catalog (GitHub listing empty/unexpected)",
                 }
             )
 
     # Filter any Chestnut slip
     teachers = [t for t in teachers if "chestnut" not in str(t.get("name", "")).lower()]
+    for t in teachers:
+        if "label" not in t:
+            if t.get("live") and t.get("source") != "fixture":
+                t["label"] = f"comma master · {t.get('name')}"
+            else:
+                t["label"] = f"fixture · {t.get('name')}"
+    # Stable order: big first
+    teachers.sort(key=lambda x: 0 if x.get("name") == BIG_TEACHER_NAME else 1)
     return teachers
+
+
+def _display_label(teacher: dict[str, Any]) -> str:
+    """UI/readiness label — big teacher only branding."""
+    name = str(teacher.get("name") or BIG_TEACHER_NAME)
+    if teacher.get("live") and teacher.get("source") != "fixture":
+        return f"comma master · {name}"
+    return f"fixture · {name}"
 
 
 def select_comma_master_teacher(
@@ -183,19 +208,57 @@ def select_comma_master_teacher(
     *,
     force_fixture: bool = False,
 ) -> dict[str, Any] | None:
-    """Pick a teacher by name (default: driving_supercombo / Cinque alias)."""
+    """Pick teacher by name. Default: big_driving_supercombo ONLY.
+
+    Never silently falls back to driving_supercombo / small model.
+    Offline fixture still labels the *big* teacher (live=false).
+    """
     teachers = list_comma_master_teachers(force_fixture=force_fixture)
     if not teachers:
         return None
+
+    def _enrich(t: dict[str, Any]) -> dict[str, Any]:
+        out = dict(t)
+        out.setdefault("role", "big" if str(out.get("name", "")).startswith("big_") else out.get("role"))
+        out["label"] = _display_label(out)
+        return out
+
     if name:
-        needle = name.lower()
+        needle = name.lower().strip()
+        # Aliases that mean "the big teacher"
+        if needle in (
+            "big",
+            "big_driving_supercombo",
+            "cinque/supercombo",
+            "cinque",
+            "default",
+        ):
+            needle = BIG_TEACHER_NAME
+        # Explicit small-model request: do not auto-swap to big, but also do not
+        # pretend small is the default — return match only if listed.
         for t in teachers:
             if t.get("name", "").lower() == needle or t.get("teacher", "").lower() == needle:
-                return t
+                return _enrich(t)
         return None
-    # Prefer stock driving_supercombo
-    for preferred in ("driving_supercombo", "Cinque/supercombo"):
-        for t in teachers:
-            if t.get("name") == preferred:
-                return t
-    return teachers[0]
+
+    # Default: big_driving_supercombo ONLY — no small-model fallback.
+    for t in teachers:
+        if t.get("name") == BIG_TEACHER_NAME:
+            return _enrich(t)
+    # Fixture / listing without big entry → synthesize labeled fixture big gap
+    return _enrich(
+        {
+            "name": BIG_TEACHER_NAME,
+            "version": "fixture",
+            "source": "fixture",
+            "artifact_ref": BIG_TEACHER_REF,
+            "artifact_url": None,
+            "live": False,
+            "teacher": BIG_TEACHER_NAME,
+            "role": "big",
+            "detail": (
+                "big_driving_supercombo unavailable — fixture labeled "
+                "(live=false; no driving_supercombo fallback; no Chestnut)"
+            ),
+        }
+    )

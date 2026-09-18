@@ -5,12 +5,10 @@ import { CamsPane } from "./components/CamsPane";
 import { LogsPane } from "./components/LogsPane";
 import { IngestPane } from "./components/IngestPane";
 import { ShardPane } from "./components/ShardPane";
-import {
-  EvalPane,
-  FlashPane,
-  TeacherPane,
-  TrainPane,
-} from "./components/MetricsBits";
+import { TeacherPane } from "./components/TeacherPane";
+import { TrainPane } from "./components/TrainPane";
+import { EvalPane } from "./components/EvalPane";
+import { FlashPane } from "./components/FlashPane";
 import { useJobStream } from "./hooks/useJobStream";
 import "./styles/app.css";
 

@@ -3,7 +3,7 @@
 **One-stop tinygrad distill control room** for comma mici routes → Cinque/supercombo teacher (7090 XT) → lighter stock-modelV2-I/O student (mici/QCOM) → export / eval / gated flash.
 
 > **M2** = shards pack on the typed event bus + one-command launcher (`./scripts/dev-up`).
-> Expo Shard pane binds truthful `stage=shard` progress. Flash stays gated. No teacher/train/flash work yet.
+> Expo Shard / Teacher / Train / Eval / Flash panes bind truthful stage events (demo streams them). Flash stays dual-gated. No `/jobs/teach|train|export|eval` yet — use **Run demo** for the full path.
 
 ## Hardware (v1)
 

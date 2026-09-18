@@ -30,6 +30,11 @@ class StudentConfig:
         default_factory=lambda: _REPO_ROOT / "artifacts" / "student"
     )
     force_fixture: bool = False
+    min_train_hours: float = 50.0
+    allow_toy_train: bool = False
+    shards_dir: Path = field(
+        default_factory=lambda: _REPO_ROOT / "artifacts" / "shards"
+    )
     repo_root: Path = field(default_factory=lambda: _REPO_ROOT)
 
 
@@ -67,6 +72,15 @@ def load_student_config(config_path: Path | str | None = None) -> StudentConfig:
     if os.environ.get("DISTILLERY_INGEST_FIXTURE", "").lower() in ("1", "true", "yes"):
         force = True
 
+    min_hours = float(block.get("min_train_hours") or 50)
+    allow_toy = bool(block.get("allow_toy_train", False))
+    if os.environ.get("DISTILLERY_ALLOW_TOY_TRAIN", "").lower() in ("1", "true", "yes"):
+        allow_toy = True
+    shards = block.get("shards_dir") or (raw.get("shards") or {}).get("output_dir") or "artifacts/shards"
+    shards_path = Path(shards)
+    if not shards_path.is_absolute():
+        shards_path = _REPO_ROOT / shards_path
+
     return StudentConfig(
         name=name,
         target=target,
@@ -76,5 +90,8 @@ def load_student_config(config_path: Path | str | None = None) -> StudentConfig:
         soft_labels_dir=soft_path,
         output_dir=out_path,
         force_fixture=force,
+        min_train_hours=min_hours,
+        allow_toy_train=allow_toy,
+        shards_dir=shards_path,
         repo_root=_REPO_ROOT,
     )

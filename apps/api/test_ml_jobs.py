@@ -13,6 +13,7 @@ def client(monkeypatch):
     monkeypatch.setenv("DISTILLERY_INGEST_FIXTURE", "1")
     monkeypatch.setenv("DISTILLERY_TEACHER_FIXTURE", "1")
     monkeypatch.setenv("DISTILLERY_STUDENT_FIXTURE", "1")
+    monkeypatch.setenv("DISTILLERY_ALLOW_TOY_TRAIN", "1")
     monkeypatch.delenv("COMMA_JWT", raising=False)
     monkeypatch.delenv("MICI_SSH_HOST", raising=False)
     from api.main import app

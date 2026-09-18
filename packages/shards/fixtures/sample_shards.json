@@ -1,0 +1,15 @@
+{
+  "label": "fixture",
+  "fixture": true,
+  "route_id": "3e2de7ed673817c2|2024-06-15--14-30-00",
+  "dongle_id": "3e2de7ed673817c2",
+  "window_frames": 120,
+  "fps": 20,
+  "cams": [
+    "road",
+    "wide",
+    "driver"
+  ],
+  "reason": "offline fixture \u2014 no real ingest artifacts",
+  "note": "Descriptors generated at pack time from ingest fixture route; this file documents the contract."
+}

@@ -4,10 +4,10 @@ import { ThinkingPane } from "./components/ThinkingPane";
 import { CamsPane } from "./components/CamsPane";
 import { LogsPane } from "./components/LogsPane";
 import { IngestPane } from "./components/IngestPane";
+import { ShardPane } from "./components/ShardPane";
 import {
   EvalPane,
   FlashPane,
-  ShardPane,
   TeacherPane,
   TrainPane,
 } from "./components/MetricsBits";
@@ -56,6 +56,13 @@ export default function App() {
             title="POST /jobs/ingest {source:fixture}"
           >
             Pull mici route
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => job.startShard({ source: "fixture" })}
+            title="POST /jobs/shard {source:fixture}"
+          >
+            Pack shards
           </button>
           <button
             disabled={busy}

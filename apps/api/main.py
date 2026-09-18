@@ -14,11 +14,12 @@ from pydantic import BaseModel, Field
 from api.demo_runner import STAGES, run_demo_pipeline
 from distillery_ingest import load_ingest_config, run_ingest_pipeline
 from distillery_ingest.resolve import list_routes as ingest_list_routes
+from distillery_shards import run_shard_pipeline
 
 app = FastAPI(
     title="Distillery Expo API",
-    version="0.2.0",
-    description="tinygrad distill control room — M1 mici ingest + M0 demo pipeline",
+    version="0.3.0",
+    description="tinygrad distill control room — M2 shard pack + M1 mici ingest + M0 demo",
 )
 
 app.add_middleware(
@@ -50,6 +51,11 @@ class JobSummary(BaseModel):
 
 
 class IngestJobRequest(BaseModel):
+    route_id: str | None = None
+    source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
+
+
+class ShardJobRequest(BaseModel):
     route_id: str | None = None
     source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
 
@@ -92,6 +98,8 @@ async def _broadcast(job_id: str, event: dict[str, Any]) -> None:
         elif name == "flash" and st in ("done", "skipped"):
             job.status = "done"
         elif job.kind == "ingest" and name == "ingest" and st == "done":
+            job.status = "done"
+        elif job.kind == "shard" and name == "shard" and st == "done":
             job.status = "done"
         elif st == "running" and job.status == "pending":
             job.status = "running"
@@ -208,6 +216,50 @@ async def _run_ingest_job(
         )
 
 
+
+async def _run_shard_job(
+    job_id: str,
+    *,
+    route_id: str | None,
+    prefer: str,
+) -> None:
+    job = _jobs[job_id]
+    job.status = "running"
+
+    async def emit(event: dict[str, Any]) -> None:
+        await _broadcast(job_id, event)
+
+    try:
+        shards = await run_shard_pipeline(
+            job_id,
+            emit,
+            route_id=route_id,
+            prefer=prefer,  # type: ignore[arg-type]
+            tick=0.12,
+        )
+        if shards:
+            job.route_id = shards[0].route_id
+        if job.status not in ("done", "failed"):
+            job.status = "done"
+    except Exception as exc:  # noqa: BLE001
+        job.status = "failed"
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "log",
+                "stage": "shard",
+                "payload": {
+                    "level": "error",
+                    "message": f"Shard pack failed: {exc}",
+                    "source": "shard",
+                },
+            },
+        )
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "distillery-expo"}
@@ -287,6 +339,33 @@ async def start_ingest(
     _subscribers[job_id] = []
     background_tasks.add_task(
         _run_ingest_job,
+        job_id,
+        route_id=body.route_id,
+        prefer=body.source,
+    )
+    return _summary(rec)
+
+
+
+@app.post("/jobs/shard", response_model=JobSummary)
+async def start_shard(
+    background_tasks: BackgroundTasks,
+    body: ShardJobRequest | None = None,
+) -> JobSummary:
+    """Start a shard-pack job; events stream on existing /ws/jobs/{id}."""
+    body = body or ShardJobRequest()
+    job_id = str(uuid4())
+    rec = JobRecord(
+        id=job_id,
+        kind="shard",
+        status="pending",
+        created_at=_now(),
+        route_id=body.route_id,
+    )
+    _jobs[job_id] = rec
+    _subscribers[job_id] = []
+    background_tasks.add_task(
+        _run_shard_job,
         job_id,
         route_id=body.route_id,
         prefer=body.source,

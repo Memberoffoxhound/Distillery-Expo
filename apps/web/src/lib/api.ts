@@ -80,6 +80,17 @@ export function startDemoJob(): Promise<JobSummary> {
   return jsonFetch("/jobs/demo", { method: "POST" });
 }
 
+export function startShardJob(body: {
+  source?: RouteSource;
+  route_id?: string | null;
+}): Promise<JobSummary> {
+  return jsonFetch("/jobs/shard", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export function confirmFlashJob(jobId: string): Promise<{ ok: boolean }> {
   return jsonFetch(`/jobs/${jobId}/flash/confirm`, {
     method: "POST",

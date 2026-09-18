@@ -21,32 +21,7 @@ function progressOf(events: DistilleryEvent[], stage: StageName): number {
   return f;
 }
 
-export function ShardPane({ events }: { events: DistilleryEvent[] }) {
-  const frac = progressOf(events, "shard");
-  const metrics = latestMetrics(events, "shard");
-  if (!metrics.length && frac === 0) {
-    return (
-      <EmptyState
-        title="Shard packing idle"
-        body="Segments become training shards after ingest. This stage is stubbed for M1."
-        hint="Run the full demo to see packing progress."
-      />
-    );
-  }
-  return (
-    <>
-      <div className="bar-track">
-        <div className="bar-fill" style={{ width: `${frac * 100}%` }} />
-      </div>
-      {metrics.map(([k, v]) => (
-        <div key={k} className="metric-row">
-          <span className="k">{k}</span>
-          <span className="v">{v}</span>
-        </div>
-      ))}
-    </>
-  );
-}
+/* ShardPane extracted to ./ShardPane.tsx (M2) */
 
 export function TeacherPane({ events }: { events: DistilleryEvent[] }) {
   const metrics = latestMetrics(events, "teach");

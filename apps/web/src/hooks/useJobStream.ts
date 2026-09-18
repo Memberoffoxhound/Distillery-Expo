@@ -4,6 +4,7 @@ import {
   confirmFlashJob,
   startDemoJob,
   startIngestJob,
+  startShardJob,
   wsUrl,
   type RouteSource,
 } from "../lib/api";
@@ -23,7 +24,7 @@ export interface StageTiming {
 
 export interface JobState {
   jobId: string | null;
-  jobKind: "demo" | "ingest" | null;
+  jobKind: "demo" | "ingest" | "shard" | null;
   status: string;
   events: DistilleryEvent[];
   stageStatus: Record<StageName, StageStatus>;
@@ -128,6 +129,14 @@ export function useJobStream() {
       }
       if (
         ev.kind === "stage" &&
+        prev.jobKind === "shard" &&
+        ev.stage === "shard" &&
+        ev.payload.status === "done"
+      ) {
+        status = "done";
+      }
+      if (
+        ev.kind === "stage" &&
         ev.payload.status === "running" &&
         (status === "pending" || status === "idle")
       ) {
@@ -174,7 +183,7 @@ export function useJobStream() {
 
   const beginJob = useCallback(
     async (
-      kind: "demo" | "ingest",
+      kind: "demo" | "ingest" | "shard",
       starter: () => Promise<{ id: string; status?: string }>
     ) => {
       seen.current = new Set();
@@ -222,6 +231,18 @@ export function useJobStream() {
     [beginJob]
   );
 
+  const startShard = useCallback(
+    async (opts?: { source?: RouteSource; routeId?: string | null }) => {
+      await beginJob("shard", () =>
+        startShardJob({
+          source: opts?.source ?? "fixture",
+          route_id: opts?.routeId ?? null,
+        })
+      );
+    },
+    [beginJob]
+  );
+
   const confirmFlash = useCallback(async () => {
     const jobId = jobIdRef.current ?? state.jobId;
     if (!jobId) return;
@@ -241,6 +262,7 @@ export function useJobStream() {
     ...state,
     startDemo,
     startIngest,
+    startShard,
     confirmFlash,
     apiBase: apiBase(),
   };

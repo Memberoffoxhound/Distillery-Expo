@@ -38,7 +38,7 @@ export function JobRail({
 }: {
   stageStatus: Record<StageName, StageStatus>;
   stageTiming: Record<StageName, StageTiming>;
-  jobKind?: "demo" | "ingest" | null;
+  jobKind?: "demo" | "ingest" | "shard" | null;
 }) {
   const [now, setNow] = useState(() => Date.now());
 
@@ -52,8 +52,9 @@ export function JobRail({
     return () => window.clearInterval(id);
   }, [stageStatus, stageTiming]);
 
-  // Ingest-only jobs: emphasize ingest; keep full rail visible but quieter for later stages
+  // Narrow jobs: emphasize active stages; keep full rail visible but quieter for later ones
   const ingestOnly = jobKind === "ingest";
+  const shardOnly = jobKind === "shard";
 
   return (
     <div className="rail" aria-label="Pipeline stages">
@@ -63,7 +64,9 @@ export function JobRail({
         const elapsed = elapsedSeconds(timing, now);
         const weight = weightLabel(timing);
         const muted =
-          ingestOnly && s !== "ingest" && status === "pending";
+          status === "pending" &&
+          ((ingestOnly && s !== "ingest") ||
+            (shardOnly && s !== "ingest" && s !== "shard"));
 
         return (
           <span key={s} style={{ display: "contents" }}>

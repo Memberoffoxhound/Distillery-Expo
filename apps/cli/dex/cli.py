@@ -1,4 +1,4 @@
-"""dex CLI — demo, stages, routes, ingest."""
+"""dex CLI — demo, stages, routes, ingest, shards."""
 
 from __future__ import annotations
 
@@ -129,6 +129,68 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_shards(args: argparse.Namespace) -> int:
+    """Start shard pack job via API, or run pipeline locally and print events."""
+    base = args.api.rstrip("/")
+    if not args.local:
+        body: dict = {"source": args.source}
+        if args.route:
+            body["route_id"] = args.route
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                r = client.post(f"{base}/jobs/shard", json=body)
+                r.raise_for_status()
+                data = r.json()
+            print(json.dumps(data, indent=2))
+            host = base.replace("http://", "").replace("https://", "")
+            print(f"\nWebSocket: ws://{host}/ws/jobs/{data['id']}")
+            print(f"Events:    {base}/jobs/{data['id']}/events")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"warn: API unreachable ({exc}); running local shard pack", file=sys.stderr)
+
+    import asyncio
+
+    from distillery_shards import load_shard_config, run_shard_pipeline
+
+    events: list[dict] = []
+
+    async def emit(ev: dict) -> None:
+        events.append(ev)
+        kind = ev.get("kind")
+        payload = ev.get("payload") or {}
+        if kind == "sample":
+            meta = payload.get("meta") or {}
+            print(
+                f"  sample shard={meta.get('shard_id')} "
+                f"frames={meta.get('frame_count')} bytes={meta.get('size_bytes')}"
+            )
+        elif kind == "stage":
+            print(f"  stage {payload.get('name')} → {payload.get('status')}")
+        elif kind == "progress":
+            print(f"  progress {payload.get('fraction'):.0%} {payload.get('detail') or ''}")
+        elif kind == "log":
+            print(f"  [{payload.get('level')}] {payload.get('message')}")
+
+    cfg = load_shard_config()
+
+    async def _run() -> None:
+        await run_shard_pipeline(
+            "local-cli",
+            emit,
+            route_id=args.route,
+            prefer=args.source,
+            cfg=cfg,
+            tick=0.05,
+            write_files=not args.no_write,
+        )
+
+    asyncio.run(_run())
+    print(f"\n{len(events)} events emitted (local)")
+    return 0
+
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="dex", description="Distillery Expo engine CLI")
     parser.add_argument("--api", default=DEFAULT_API, help="API base URL")
@@ -168,6 +230,26 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip API; emit events to stdout",
     )
     p_ingest.set_defaults(func=cmd_ingest)
+
+
+    p_shards = sub.add_parser("shards", aliases=["pack"], help="Pack route into training shards")
+    p_shards.add_argument("--route", default=None, help="Route id (dongle|date--time)")
+    p_shards.add_argument(
+        "--source",
+        choices=["auto", "connect", "ssh", "fixture"],
+        default="auto",
+    )
+    p_shards.add_argument(
+        "--local",
+        action="store_true",
+        help="Skip API; emit events to stdout",
+    )
+    p_shards.add_argument(
+        "--no-write",
+        action="store_true",
+        help="Do not write shard JSON artifacts (local only)",
+    )
+    p_shards.set_defaults(func=cmd_shards)
 
     args = parser.parse_args(argv)
     return args.func(args)

@@ -11,7 +11,7 @@
 #
 # Design:
 #   - Fedora-first (dnf + sudo) with clear [N/M] progress — never silent
-#   - Portable toward macOS (Darwin + brew); friendly message if brew missing
+#   - Steam Deck / SteamOS / Arch (pacman); macOS (Darwin + brew)
 #   - No apt-only paths, no glibc-only assumptions
 #   - Safe to re-run
 #   - If already inside Distillery-Expo (or $DISTILLERY_HOME), use it and
@@ -48,6 +48,79 @@ is_fedora_like() {
   have_cmd dnf || have_cmd microdnf || {
     [ -f /etc/fedora-release ] || [ -f /etc/redhat-release ]
   }
+}
+
+# SteamOS / Arch / EndeavourOS / Manjaro / CachyOS / etc.
+os_release_id() {
+  if [ -f /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    printf '%s' "${ID:-}"
+  fi
+}
+
+os_release_id_like() {
+  if [ -f /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    printf '%s' "${ID_LIKE:-}"
+  fi
+}
+
+is_arch_like() {
+  have_cmd pacman || {
+    _id=$(os_release_id)
+    _like=$(os_release_id_like)
+    case "$_id" in
+      steamos|arch|endeavouros|manjaro|cachyos|garuda|archarm) return 0 ;;
+    esac
+    case " $_like " in
+      *" arch "*|*" archlinux "*) return 0 ;;
+    esac
+    return 1
+  }
+}
+
+is_steamos() {
+  _id=$(os_release_id)
+  [ "$_id" = "steamos" ] && return 0
+  # Deck often exposes steamos even when ID is steamos; also check helper
+  have_cmd steamos-readonly && return 0
+  return 1
+}
+
+maybe_disable_steamos_readonly() {
+  if ! have_cmd steamos-readonly; then
+    return 0
+  fi
+  # Steam Deck ships a read-only root; pacman needs it writable.
+  info "  SteamOS detected — ensuring writable root (steamos-readonly disable) …"
+  info "  (may prompt for sudo password; Steam Deck default password is often empty / set by you)"
+  if have_cmd sudo; then
+    if ! sudo steamos-readonly disable; then
+      warn "  steamos-readonly disable failed — if pacman fails, run: sudo steamos-readonly disable"
+    else
+      info "  steamos-readonly: disabled for this install"
+    fi
+  else
+    if ! steamos-readonly disable; then
+      warn "  steamos-readonly disable failed — run as root or with sudo, then re-run bootstrap"
+    fi
+  fi
+}
+
+die_missing_pkg_manager() {
+  die "Missing python3/node/npm and no supported package manager found.
+
+Install the toolchain, then re-run ./scripts/bootstrap.sh (or ./scripts/dev-up):
+
+  Fedora / RHEL:   sudo dnf install -y python3 python3-pip nodejs npm
+  Arch / SteamOS:  sudo steamos-readonly disable   # Steam Deck only
+                   sudo pacman -Sy --needed python python-pip python-virtualenv nodejs npm
+  macOS:           brew install python node
+                   (install Homebrew from https://brew.sh if needed)
+
+Or install python3, pip/venv, node, and npm another way, then re-run."
 }
 
 REPO_URL="${DISTILLERY_REPO_URL:-https://github.com/Memberoffoxhound/Distillery-Expo.git}"
@@ -171,7 +244,7 @@ else
   need_venv=1
 fi
 
-# pip: either pip3 or ensurepip/venv will provide it later — still install pip pkgs on Fedora
+# pip: either pip3 or ensurepip/venv will provide it later — still install pip pkgs when missing
 need_pip=0
 if have_cmd python3; then
   if ! python3 -m pip --version >/dev/null 2>&1 && ! have_cmd pip3; then
@@ -202,22 +275,15 @@ else
 
   case "$OS" in
     linux)
-      if is_fedora_like || have_cmd dnf; then
+      if is_fedora_like || have_cmd dnf || have_cmd microdnf; then
         DNF=dnf
         have_cmd dnf || DNF=microdnf
         pkgs=""
         [ "$need_python" = "1" ] && pkgs="$pkgs python3"
         [ "$need_pip" = "1" ] && pkgs="$pkgs python3-pip"
         [ "$need_venv" = "1" ] && pkgs="$pkgs python3-pip"
-        # Fedora: python3-venv is often part of python3; ensure pip + ensurepip path
-        # Also install python3-devel is NOT required for venv on Fedora typically
-        # Explicit: python3 + python3-pip covers venv on modern Fedora
         [ "$need_node" = "1" ] && pkgs="$pkgs nodejs"
         [ "$need_npm" = "1" ] && pkgs="$pkgs npm"
-        # Always include python3-pip when any python piece missing
-        case " $pkgs " in
-          *" python3 "*|*" python3-pip "*) ;;
-        esac
         if [ "$need_venv" = "1" ] || [ "$need_pip" = "1" ] || [ "$need_python" = "1" ]; then
           case " $pkgs " in
             *" python3 "*) ;;
@@ -228,7 +294,6 @@ else
             *) pkgs="$pkgs python3-pip" ;;
           esac
         fi
-        # Deduplicate spaces
         pkgs=$(printf '%s' "$pkgs" | tr -s ' ' | sed 's/^ //;s/ $//')
         info "  Fedora/dnf install: $pkgs"
         info "  (may prompt for sudo password)"
@@ -238,8 +303,36 @@ else
         else
           "$DNF" install -y $pkgs
         fi
+      elif is_arch_like || have_cmd pacman; then
+        # Arch / Steam Deck (SteamOS) / EndeavourOS …
+        # Packages: python (provides python3), python-pip, python-virtualenv, nodejs, npm
+        pkgs=""
+        if [ "$need_python" = "1" ] || [ "$need_pip" = "1" ] || [ "$need_venv" = "1" ]; then
+          pkgs="$pkgs python python-pip python-virtualenv"
+        fi
+        if [ "$need_node" = "1" ] || [ "$need_npm" = "1" ]; then
+          pkgs="$pkgs nodejs npm"
+        fi
+        pkgs=$(printf '%s' "$pkgs" | tr -s ' ' | sed 's/^ //;s/ $//')
+        if [ -z "$pkgs" ]; then
+          die "Internal: install needed but no pacman packages selected"
+        fi
+        if is_steamos || have_cmd steamos-readonly; then
+          info "  Steam Deck / SteamOS — pacman install after writable root"
+          maybe_disable_steamos_readonly
+        else
+          info "  Arch/pacman install: $pkgs"
+        fi
+        info "  pacman -Sy --needed $pkgs"
+        info "  (may prompt for sudo password)"
+        # shellcheck disable=SC2086
+        if have_cmd sudo; then
+          sudo pacman -Sy --needed --noconfirm $pkgs
+        else
+          pacman -Sy --needed --noconfirm $pkgs
+        fi
       else
-        die "Missing python3/node/npm and no dnf found. On Fedora: sudo dnf install python3 python3-pip nodejs npm. On macOS: install Homebrew then re-run. Or install the tools manually and re-run ./scripts/bootstrap.sh / ./scripts/dev-up."
+        die_missing_pkg_manager
       fi
       ;;
     macos)
@@ -273,7 +366,7 @@ else
   have_cmd python3 || die "python3 still missing after install"
   have_cmd node || die "node still missing after install"
   have_cmd npm || die "npm still missing after install"
-  python3 -c "import venv" 2>/dev/null || die "python3 venv module still missing (try: sudo dnf install python3 python3-pip)"
+  python3 -c "import venv" 2>/dev/null || die "python3 venv module still missing (Fedora: sudo dnf install python3 python3-pip · Arch/SteamOS: sudo pacman -S python python-virtualenv)"
   info "  Installed OK:"
   info "    python3 $(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
   info "    node $(node -v) · npm $(npm -v)"

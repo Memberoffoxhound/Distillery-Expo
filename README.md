@@ -25,6 +25,8 @@ If you do not have Node/Python yet (or want the bare-machine path), run the publ
 curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh
 ```
 
+Works on **Fedora** (`dnf`), **macOS** (`brew`), and **Steam Deck / Arch / SteamOS** (`pacman`; unlocks read-only root when needed).
+
 **Or** — clone, then run locally (update-aware):
 
 ```bash

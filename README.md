@@ -17,23 +17,39 @@
 
 Dongle default: `3e2de7ed673817c2` (see `configs/default.yaml`).
 
-## Quickstart — one curl (bare machine)
+## Quickstart — bootstrap (bare machine)
 
-If you do not have Node/Python yet (or want the Phil-bar path):
+This repo is **private**. A naked `raw.githubusercontent.com` URL **404s** without auth — never advertise that path.
+
+If you do not have Node/Python yet (or want the Phil-bar path), use an **authenticated** one-shot (requires `gh auth login` first):
+
+**Preferred** — Contents API (works with `gh` auth, no raw URL):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh | sh
+gh api repos/Memberoffoxhound/Distillery-Expo/contents/scripts/bootstrap.sh?ref=main --jq .content | base64 -d | sh
 ```
 
-That prints `[1/6]…[6/6]` progress, installs missing tools (**Fedora/`dnf` first**; **macOS/`brew`** when present), clones to `~/Distillery-Expo` if needed, installs repo deps, and starts Expo at **http://127.0.0.1:5173**.
+**Or** — authenticated raw fetch:
+
+```bash
+curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
+  "https://raw.githubusercontent.com/Memberoffoxhound/Distillery-Expo/main/scripts/bootstrap.sh" | sh
+```
+
+**Or** — clone, then run locally (update-aware):
+
+```bash
+gh repo clone Memberoffoxhound/Distillery-Expo ~/Distillery-Expo
+cd ~/Distillery-Expo && ./scripts/bootstrap.sh
+```
+
+That prints `[1/7]…[7/7]` progress, installs missing tools (**Fedora/`dnf` first**; **macOS/`brew`** when present), clones to `~/Distillery-Expo` if needed, installs repo deps, and starts Expo at **http://127.0.0.1:5173**.
 
 Already cloned? From the repo root:
 
 ```bash
 ./scripts/bootstrap.sh
 ```
-
-**Private repo:** `curl` of raw `main` and `git clone` may need GitHub auth — run `gh auth login` (or use a token / `GIT_ASKPASS`) first, then retry.
 
 ### Day-to-day (toolchain already present)
 

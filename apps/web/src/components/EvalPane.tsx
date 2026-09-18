@@ -65,7 +65,7 @@ export function EvalPane({ events }: { events: DistilleryEvent[] }) {
       return (
         <EmptyState
           title="Scorecard pending"
-          body="Export is still in flight. Offline metrics land here once eval events stream — no license until numbers exist."
+          body="Export is still in flight. Scorecard lands here once eval streams — license means the student matches the teacher’s driving, not a finished-looking file."
           hint="stage=export → stage=eval"
         />
       );
@@ -74,7 +74,7 @@ export function EvalPane({ events }: { events: DistilleryEvent[] }) {
       return (
         <EmptyState
           title="Scorecard pending"
-          body="Waiting for offline eval. A driving agent without numbers is not licensed — this pane stays quiet until metrics arrive."
+          body="Waiting for offline eval. Not licensed yet until teacher-parity numbers land (agreement / replay / MAE) — this pane stays quiet until then."
           hint="Run demo streams eval · /jobs/eval later"
         />
       );
@@ -82,7 +82,7 @@ export function EvalPane({ events }: { events: DistilleryEvent[] }) {
     return (
       <EmptyState
         title="Scorecard pending"
-        body="Eval grades the student before any mici write. Nothing to show until metrics stream — we do not invent a pass."
+        body="Eval asks: does this distill drive as well as the big teacher? Nothing to show until metrics stream — we do not invent a pass."
         hint="stage=eval · metric / progress / stage"
       />
     );
@@ -107,10 +107,10 @@ export function EvalPane({ events }: { events: DistilleryEvent[] }) {
     stage?.detail ??
     (status === "done"
       ? fixture
-        ? "Offline scorecard · not licensed"
-        : allPass
-          ? "Scorecard cleared gate"
-          : "Scorecard hold — not licensed"
+        ? "Offline scorecard · not licensed yet"
+        : evalPassed
+          ? "Matches teacher — gate cleared"
+          : "Not licensed yet — below teacher"
       : status === "failed"
         ? "Eval failed"
         : "Scoring student");
@@ -133,7 +133,7 @@ export function EvalPane({ events }: { events: DistilleryEvent[] }) {
           </div>
         ) : (
           <div className="muted">
-            Driving-agent scorecard · flash gate input · never a fake pass
+            Teacher-parity scorecard · flash gate · matches teacher or not licensed yet
           </div>
         )}
       </div>
@@ -143,10 +143,10 @@ export function EvalPane({ events }: { events: DistilleryEvent[] }) {
           {`eval_passed=${evalPassed} · live=${live === null ? "unknown" : live}`}
           {" — "}
           {fixture
-            ? "fixture/offline (live=false). Looks ready ≠ road ready."
+            ? "fixture/offline (live=false). Looks ready ≠ matches teacher."
             : !evalPassed
-              ? "not licensed yet — defaults closed until thresholds clear."
-              : "numbers cleared — flash still needs your confirm. Never auto-write."}
+              ? "not licensed yet — student must match teacher driving (agreement / replay / MAE)."
+              : "teacher-parity cleared — flash still needs your confirm. Never auto-write."}
         </div>
       )}
 

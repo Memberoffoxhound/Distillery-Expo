@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from distillery_eval.config import EvalConfig
+from distillery_student.hours import estimate_driving_hours, hours_meet_floor
 
 
 def _mean(xs: list[float]) -> float:
@@ -173,10 +174,37 @@ def compute_scorecard(
         "desire_top1": metrics["desire_top1"] >= cfg.min_desire_top1,
         "route_replay": metrics["route_replay"] >= cfg.min_route_replay,
     }
-    eval_passed = all(gates.values()) and len(desire_rows) > 0
 
-    # Explicit license language for fixture / offline
-    if not live:
+    hours_info = estimate_driving_hours(
+        soft_labels_dir=cfg.soft_labels_dir,
+        shards_dir=getattr(cfg, "shards_dir", None),
+        soft_summary=soft_manifest,
+    )
+    hours_gate = hours_meet_floor(
+        hours_info,
+        min_hours=float(getattr(cfg, "min_train_hours", 50.0)),
+        allow_toy=bool(getattr(cfg, "allow_toy_train", False)),
+    )
+    if not hours_gate.get("ok"):
+        gates["hours"] = False
+        insufficient_hours = True
+    else:
+        gates["hours"] = True
+        insufficient_hours = False
+
+    eval_passed = all(gates.values()) and len(desire_rows) > 0
+    fail_reason = None
+    if insufficient_hours:
+        eval_passed = False
+        fail_reason = "insufficient_hours"
+
+    if fail_reason == "insufficient_hours":
+        license_note = (
+            f"insufficient_hours — hours={hours_info.get('hours')} "
+            f"< min={hours_gate.get('min_hours')}; not licensed "
+            f"(set DISTILLERY_ALLOW_TOY_TRAIN=1 for CI toy only)"
+        )
+    elif not live:
         license_note = (
             "fixture/offline — not licensed for flash"
             if not eval_passed
@@ -189,7 +217,10 @@ def compute_scorecard(
         "eval_passed": eval_passed,
         "live": live,
         "source": source,
-        "metrics": metrics,
+        "metrics": {
+            **metrics,
+            "driving_hours": float(hours_info.get("hours") or 0.0),
+        },
         "gates": gates,
         "thresholds": {
             "min_teacher_agreement": cfg.min_teacher_agreement,
@@ -197,10 +228,15 @@ def compute_scorecard(
             "max_longitudinal_mae": cfg.max_longitudinal_mae,
             "min_desire_top1": cfg.min_desire_top1,
             "min_route_replay": cfg.min_route_replay,
+            "min_train_hours": float(getattr(cfg, "min_train_hours", 50.0)),
         },
         "license_note": license_note,
         "teacher": soft_manifest.get("teacher") or "Cinque/supercombo",
+        "hours": hours_info,
+        "hours_gate": hours_gate,
+        "fail_reason": fail_reason,
     }
+
 
 
 def write_scorecard(output_dir: Path, scorecard: dict[str, Any]) -> Path:

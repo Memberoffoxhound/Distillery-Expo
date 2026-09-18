@@ -91,6 +91,69 @@ export function startShardJob(body: {
   });
 }
 
+export function startTeachJob(body: {
+  source?: RouteSource;
+  route_id?: string | null;
+}): Promise<JobSummary> {
+  return jsonFetch("/jobs/teach", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function startTrainJob(body: {
+  source?: RouteSource;
+  route_id?: string | null;
+}): Promise<JobSummary> {
+  return jsonFetch("/jobs/train", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function startExportJob(body: {
+  route_id?: string | null;
+  checkpoint_path?: string | null;
+} = {}): Promise<JobSummary> {
+  return jsonFetch("/jobs/export", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function startEvalJob(body: {
+  route_id?: string | null;
+  onnx_path?: string | null;
+  force_fail?: boolean;
+  force_pass?: boolean;
+} = {}): Promise<JobSummary> {
+  return jsonFetch("/jobs/eval", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Simple-user ship path: teach→train→export→eval→gated flash. */
+export function startPipelineJob(body: {
+  source?: RouteSource;
+  route_id?: string | null;
+  include_flash?: boolean;
+} = {}): Promise<JobSummary> {
+  return jsonFetch("/jobs/pipeline", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: body.source ?? "fixture",
+      route_id: body.route_id ?? null,
+      include_flash: body.include_flash ?? true,
+    }),
+  });
+}
+
 export function confirmFlashJob(jobId: string): Promise<{ ok: boolean }> {
   return jsonFetch(`/jobs/${jobId}/flash/confirm`, {
     method: "POST",

@@ -46,8 +46,10 @@ def test_scorecard_fixture_defaults_to_fail(tmp_path):
     assert "not licensed" in card["license_note"].lower() or card["eval_passed"] is False
 
 
-def test_scorecard_can_pass_only_when_thresholds_met(tmp_path):
+def test_scorecard_can_pass_only_when_thresholds_met(tmp_path, monkeypatch):
     """If we loosen thresholds enough, a real pass is allowed — still live=false."""
+    # Hours floor would otherwise force insufficient_hours; toy allow for this unit case.
+    monkeypatch.setenv("DISTILLERY_ALLOW_TOY_TRAIN", "1")
     soft_dir = tmp_path / "soft"
     batches = build_fixture_batches(n_batches=1, samples_per_batch=8)
     write_soft_label_artifacts(batches, soft_dir)
@@ -58,6 +60,7 @@ def test_scorecard_can_pass_only_when_thresholds_met(tmp_path):
         soft_labels_dir=soft_dir,
         student_dir=tmp_path / "student",
         force_fixture=True,
+        allow_toy_train=True,
         min_teacher_agreement=0.0,
         max_lateral_mae=999.0,
         max_longitudinal_mae=999.0,
@@ -68,6 +71,32 @@ def test_scorecard_can_pass_only_when_thresholds_met(tmp_path):
     assert card["live"] is False
     assert card["eval_passed"] is True  # thresholds actually met
     assert card["source"] == "fixture"
+
+
+def test_scorecard_insufficient_hours_forces_fail(tmp_path, monkeypatch):
+    monkeypatch.delenv("DISTILLERY_ALLOW_TOY_TRAIN", raising=False)
+    soft_dir = tmp_path / "soft"
+    batches = build_fixture_batches(n_batches=1, samples_per_batch=8)
+    write_soft_label_artifacts(batches, soft_dir)
+    from dataclasses import replace
+
+    cfg = replace(
+        load_eval_config(),
+        soft_labels_dir=soft_dir,
+        student_dir=tmp_path / "student",
+        force_fixture=True,
+        allow_toy_train=False,
+        min_train_hours=50.0,
+        min_teacher_agreement=0.0,
+        max_lateral_mae=999.0,
+        max_longitudinal_mae=999.0,
+        min_desire_top1=0.0,
+        min_route_replay=0.0,
+    )
+    card = compute_scorecard(cfg, student_meta={"final_loss": 0.01})
+    assert card["eval_passed"] is False
+    assert card.get("fail_reason") == "insufficient_hours"
+    assert card["gates"].get("hours") is False
 
 
 def test_eval_pipeline_emits_eval_passed_false_on_fixture():

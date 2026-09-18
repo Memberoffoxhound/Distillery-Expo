@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from distillery_student.hours import DEFAULT_MIN_TRAIN_HOURS, toy_train_allowed
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_CONFIG = _REPO_ROOT / "configs" / "default.yaml"
 
@@ -41,6 +43,11 @@ class EvalConfig:
     min_route_replay: float = DEFAULT_MIN_ROUTE_REPLAY
     # If True, force fixture scoring path (still real numbers; still may fail gate)
     force_fixture: bool = False
+    min_train_hours: float = DEFAULT_MIN_TRAIN_HOURS
+    allow_toy_train: bool = False
+    shards_dir: Path = field(
+        default_factory=lambda: _REPO_ROOT / "artifacts" / "shards"
+    )
     repo_root: Path = field(default_factory=lambda: _REPO_ROOT)
 
 
@@ -87,5 +94,12 @@ def load_eval_config(config_path: Path | str | None = None) -> EvalConfig:
         min_desire_top1=float(block.get("min_desire_top1") or DEFAULT_MIN_DESIRE_TOP1),
         min_route_replay=float(block.get("min_route_replay") or DEFAULT_MIN_ROUTE_REPLAY),
         force_fixture=force,
+        min_train_hours=float(
+            block.get("min_train_hours")
+            or os.environ.get("DISTILLERY_MIN_TRAIN_HOURS")
+            or DEFAULT_MIN_TRAIN_HOURS
+        ),
+        allow_toy_train=bool(block.get("allow_toy_train")) or toy_train_allowed(),
+        shards_dir=_path("shards_dir", "artifacts/shards"),
         repo_root=_REPO_ROOT,
     )

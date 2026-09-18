@@ -1,5 +1,49 @@
 # packages/ingest
 
-**v1 scope:** Pull mici routes via comma Connect and/or local SSH. Resolve dongle `3e2de7ed673817c2`, list segments, stream road/wide/driver cam metadata into the event bus.
+**M1 thin slice:** Pull mici routes via **comma Connect** and/or **local SSH**, resolve dongle from `configs/default.yaml`, list segments, and emit `stage=ingest` progress + cam `sample` events onto the shared Distillery event bus.
 
-**M0:** stub only — demo emits placeholder cam samples.
+## Sources (priority)
+
+| Prefer | When |
+|--------|------|
+| `connect` | `COMMA_JWT` / `CONNECT_JWT` set |
+| `ssh` | `MICI_SSH_HOST` (+ optional `MICI_SSH_KEY`, `MICI_SSH_USER`) |
+| `fixture` | No creds, or `DISTILLERY_INGEST_FIXTURE=1` |
+
+Fixture routes are **truthful-shaped** (Connect-like `route_id`, segments, per-cam hevc metadata) and labeled `meta.fixture` / `meta.label=fixture` with `placeholder=true` on samples.
+
+Default dongle: `3e2de7ed673817c2`.
+
+## Event contract
+
+Ingest jobs emit existing `DistilleryEvent` kinds only:
+
+- `stage` — `name=ingest`, `status=running|done|failed`
+- `progress` — `fraction` 0–1 + detail
+- `decision` — route source choice
+- `metric` — `segments_found`, `route_hours`
+- `sample` — one+ per cam (`road` / `wide` / `driver`) with `uri`, `meta` (fps, size, route_id, source, fixture flag)
+- `log` — human-readable
+
+## Python API
+
+```python
+from distillery_ingest import load_ingest_config, run_ingest_pipeline
+from distillery_ingest.resolve import list_routes
+
+cfg = load_ingest_config()
+src, routes = list_routes(cfg, prefer="auto")
+# async: await run_ingest_pipeline(job_id, emit, route_id=..., prefer="auto")
+```
+
+## Layout
+
+```
+distillery_ingest/
+  config.py      # YAML + env
+  models.py      # RouteInfo / SegmentInfo / CamSample
+  resolve.py     # Connect → SSH → fixture
+  pipeline.py    # emit DistilleryEvents
+  sources/       # connect.py, ssh.py, fixture.py
+fixtures/sample_route.json
+```

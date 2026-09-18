@@ -1,13 +1,12 @@
-import { useEffect, useRef } from "react";
 import { JobRail } from "./components/JobRail";
 import { Pane } from "./components/Pane";
 import { ThinkingPane } from "./components/ThinkingPane";
 import { CamsPane } from "./components/CamsPane";
 import { LogsPane } from "./components/LogsPane";
+import { IngestPane } from "./components/IngestPane";
 import {
   EvalPane,
   FlashPane,
-  IngestPane,
   ShardPane,
   TeacherPane,
   TrainPane,
@@ -17,22 +16,26 @@ import "./styles/app.css";
 
 export default function App() {
   const job = useJobStream();
-  const autoStarted = useRef(false);
-  const startDemo = job.startDemo;
 
-  useEffect(() => {
-    if (autoStarted.current) return;
-    autoStarted.current = true;
-    const t = setTimeout(() => startDemo(), 400);
-    return () => clearTimeout(t);
-  }, [startDemo]);
+  const busy =
+    job.status === "pending" ||
+    job.status === "running" ||
+    job.status === "gated";
 
   const pillClass =
     job.status === "gated"
       ? "gated"
-      : job.connected || job.status === "running"
-        ? "live"
-        : "";
+      : job.status === "failed"
+        ? "failed"
+        : job.connected || job.status === "running"
+          ? "live"
+          : "";
+
+  const statusLabel = job.error
+    ? `err: ${job.error}`
+    : job.jobId
+      ? `${job.jobKind ?? "job"} · ${job.status} · ${job.jobId.slice(0, 8)}`
+      : "idle";
 
   return (
     <div className="app">
@@ -45,24 +48,40 @@ export default function App() {
           </div>
         </div>
         <div className="header-actions">
-          <span className={`status-pill ${pillClass}`}>
-            {job.error
-              ? `err: ${job.error}`
-              : job.jobId
-                ? `${job.status} · ${job.jobId.slice(0, 8)}`
-                : "idle"}
-          </span>
-          <button className="primary" onClick={() => job.startDemo()}>
+          <span className={`status-pill ${pillClass}`}>{statusLabel}</span>
+          <button
+            className="primary"
+            disabled={busy}
+            onClick={() => job.startIngest({ source: "fixture" })}
+            title="POST /jobs/ingest {source:fixture}"
+          >
+            Pull mici route
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => job.startDemo()}
+            title="Full M0 staged demo (flash stays gated)"
+          >
             Run demo
           </button>
         </div>
       </header>
 
-      <JobRail stageStatus={job.stageStatus} />
+      <JobRail
+        stageStatus={job.stageStatus}
+        stageTiming={job.stageTiming}
+        jobKind={job.jobKind}
+      />
 
       <main className="grid">
-        <Pane title="Ingest" tag="Connect" className="ingest">
-          <IngestPane events={job.events} />
+        <Pane title="Ingest" tag="mici routes" className="ingest">
+          <IngestPane
+            events={job.events}
+            busy={busy}
+            onIngest={({ source, routeId }) =>
+              job.startIngest({ source, routeId })
+            }
+          />
         </Pane>
         <Pane title="Cams" tag="road / wide / driver" className="cams">
           <CamsPane events={job.events} />

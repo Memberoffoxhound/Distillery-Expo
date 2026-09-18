@@ -4,19 +4,21 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from api.demo_runner import STAGES, run_demo_pipeline
+from distillery_ingest import load_ingest_config, run_ingest_pipeline
+from distillery_ingest.resolve import list_routes as ingest_list_routes
 
 app = FastAPI(
     title="Distillery Expo API",
-    version="0.1.0",
-    description="tinygrad distill control room — M0 demo pipeline",
+    version="0.2.0",
+    description="tinygrad distill control room — M1 mici ingest + M0 demo pipeline",
 )
 
 app.add_middleware(
@@ -35,6 +37,7 @@ class JobRecord(BaseModel):
     created_at: str
     events: list[dict[str, Any]] = Field(default_factory=list)
     flash_confirmed: bool = False
+    route_id: str | None = None
 
 
 class JobSummary(BaseModel):
@@ -43,9 +46,15 @@ class JobSummary(BaseModel):
     status: str
     created_at: str
     event_count: int
+    route_id: str | None = None
 
 
-# In-memory job store (M0)
+class IngestJobRequest(BaseModel):
+    route_id: str | None = None
+    source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
+
+
+# In-memory job store
 _jobs: dict[str, JobRecord] = {}
 _subscribers: dict[str, list[asyncio.Queue]] = {}
 _flash_events: dict[str, asyncio.Event] = {}
@@ -53,6 +62,17 @@ _flash_events: dict[str, asyncio.Event] = {}
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _summary(job: JobRecord) -> JobSummary:
+    return JobSummary(
+        id=job.id,
+        kind=job.kind,
+        status=job.status,
+        created_at=job.created_at,
+        event_count=len(job.events),
+        route_id=job.route_id,
+    )
 
 
 async def _broadcast(job_id: str, event: dict[str, Any]) -> None:
@@ -64,11 +84,14 @@ async def _broadcast(job_id: str, event: dict[str, Any]) -> None:
     if event.get("kind") == "stage":
         payload = event.get("payload") or {}
         st = payload.get("status")
+        name = payload.get("name")
         if st == "gated":
             job.status = "gated"
         elif st == "failed":
             job.status = "failed"
-        elif payload.get("name") == "flash" and st in ("done", "skipped"):
+        elif name == "flash" and st in ("done", "skipped"):
+            job.status = "done"
+        elif job.kind == "ingest" and name == "ingest" and st == "done":
             job.status = "done"
         elif st == "running" and job.status == "pending":
             job.status = "running"
@@ -107,7 +130,7 @@ async def _wait_flash(job_id: str) -> bool:
         return False
 
 
-async def _run_job(job_id: str) -> None:
+async def _run_demo_job(job_id: str) -> None:
     job = _jobs[job_id]
     job.status = "running"
 
@@ -143,6 +166,48 @@ async def _run_job(job_id: str) -> None:
         )
 
 
+async def _run_ingest_job(
+    job_id: str,
+    *,
+    route_id: str | None,
+    prefer: str,
+) -> None:
+    job = _jobs[job_id]
+    job.status = "running"
+
+    async def emit(event: dict[str, Any]) -> None:
+        await _broadcast(job_id, event)
+
+    try:
+        route = await run_ingest_pipeline(
+            job_id,
+            emit,
+            route_id=route_id,
+            prefer=prefer,  # type: ignore[arg-type]
+            tick=0.12,
+        )
+        job.route_id = route.route_id
+        if job.status not in ("done", "failed"):
+            job.status = "done"
+    except Exception as exc:  # noqa: BLE001
+        job.status = "failed"
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "log",
+                "stage": "ingest",
+                "payload": {
+                    "level": "error",
+                    "message": f"Ingest failed: {exc}",
+                    "source": "ingest",
+                },
+            },
+        )
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "distillery-expo"}
@@ -153,6 +218,45 @@ async def list_stages() -> dict[str, list[str]]:
     return {"stages": [s.value for s in STAGES]}
 
 
+@app.get("/dongle")
+async def get_dongle() -> dict[str, Any]:
+    cfg = load_ingest_config()
+    return {
+        "dongle_id": cfg.dongle_id,
+        "cams": list(cfg.cams),
+        "connect_available": cfg.connect_available,
+        "ssh_available": cfg.ssh_available,
+        "force_fixture": cfg.force_fixture,
+    }
+
+
+@app.get("/routes")
+async def get_routes(
+    source: Literal["auto", "connect", "ssh", "fixture"] = Query("auto"),
+    limit: int = Query(20, ge=1, le=100),
+) -> dict[str, Any]:
+    """List mici routes for the configured dongle (Connect / SSH / fixture)."""
+    cfg = load_ingest_config()
+    src, routes = ingest_list_routes(cfg, prefer=source, limit=limit)
+    return {
+        "dongle_id": cfg.dongle_id,
+        "source": src.name,
+        "routes": [r.summary_dict() for r in routes],
+    }
+
+
+@app.get("/routes/{route_id:path}")
+async def get_route_detail(
+    route_id: str,
+    source: Literal["auto", "connect", "ssh", "fixture"] = Query("auto"),
+) -> dict[str, Any]:
+    from distillery_ingest.resolve import get_route as ingest_get_route
+
+    cfg = load_ingest_config()
+    src, route = ingest_get_route(route_id, cfg, prefer=source)
+    return {"source": src.name, "route": route.model_dump(mode="json")}
+
+
 @app.post("/jobs/demo", response_model=JobSummary)
 async def start_demo(background_tasks: BackgroundTasks) -> JobSummary:
     job_id = str(uuid4())
@@ -160,14 +264,34 @@ async def start_demo(background_tasks: BackgroundTasks) -> JobSummary:
     _jobs[job_id] = rec
     _flash_events[job_id] = asyncio.Event()
     _subscribers[job_id] = []
-    background_tasks.add_task(_run_job, job_id)
-    return JobSummary(
-        id=rec.id,
-        kind=rec.kind,
-        status=rec.status,
-        created_at=rec.created_at,
-        event_count=0,
+    background_tasks.add_task(_run_demo_job, job_id)
+    return _summary(rec)
+
+
+@app.post("/jobs/ingest", response_model=JobSummary)
+async def start_ingest(
+    background_tasks: BackgroundTasks,
+    body: IngestJobRequest | None = None,
+) -> JobSummary:
+    """Start an ingest-only job; events stream on existing /ws/jobs/{id}."""
+    body = body or IngestJobRequest()
+    job_id = str(uuid4())
+    rec = JobRecord(
+        id=job_id,
+        kind="ingest",
+        status="pending",
+        created_at=_now(),
+        route_id=body.route_id,
     )
+    _jobs[job_id] = rec
+    _subscribers[job_id] = []
+    background_tasks.add_task(
+        _run_ingest_job,
+        job_id,
+        route_id=body.route_id,
+        prefer=body.source,
+    )
+    return _summary(rec)
 
 
 @app.get("/jobs/{job_id}", response_model=JobSummary)
@@ -175,13 +299,7 @@ async def get_job(job_id: str) -> JobSummary:
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(404, "job not found")
-    return JobSummary(
-        id=job.id,
-        kind=job.kind,
-        status=job.status,
-        created_at=job.created_at,
-        event_count=len(job.events),
-    )
+    return _summary(job)
 
 
 @app.get("/jobs/{job_id}/events")

@@ -1,0 +1,133 @@
+{
+  "route_id": "3e2de7ed673817c2|2024-06-15--14-30-00",
+  "dongle_id": "3e2de7ed673817c2",
+  "display_name": "2024-06-15--14-30-00",
+  "source": "fixture",
+  "start_time": "2024-06-15T19:30:00+00:00",
+  "end_time": "2024-06-15T19:33:00+00:00",
+  "length_s": 180.0,
+  "segment_count": 3,
+  "segments": [
+    {
+      "segment_id": "3e2de7ed673817c2|2024-06-15--14-30-00/0",
+      "index": 0,
+      "duration_s": 60.0,
+      "cams": {
+        "road": {
+          "filename": "fcamera.hevc",
+          "path": "/data/media/0/realdata/3e2de7ed673817c2/2024-06-15--14-30-00/0/fcamera.hevc",
+          "codec": "hevc",
+          "fps": 20,
+          "width": 1164,
+          "height": 874,
+          "exists": true
+        },
+        "wide": {
+          "filename": "ecamera.hevc",
+          "path": "/data/media/0/realdata/3e2de7ed673817c2/2024-06-15--14-30-00/0/ecamera.hevc",
+          "codec": "hevc",
+          "fps": 20,
+          "width": 1164,
+          "height": 874,
+          "exists": true
+        },
+        "driver": {
+          "filename": "dcamera.hevc",
+          "path": "/data/media/0/realdata/3e2de7ed673817c2/2024-06-15--14-30-00/0/dcamera.hevc",
+          "codec": "hevc",
+          "fps": 20,
+          "width": 864,
+          "height": 648,
+          "exists": true
+        }
+      },
+      "meta": {
+        "fixture": true
+      }
+    },
+    {
+      "segment_id": "3e2de7ed673817c2|2024-06-15--14-30-00/1",
+      "index": 1,
+      "duration_s": 60.0,
+      "cams": {
+        "road": {
+          "filename": "fcamera.hevc",
+          "path": "/data/media/0/realdata/3e2de7ed673817c2/2024-06-15--14-30-00/1/fcamera.hevc",
+          "codec": "hevc",
+          "fps": 20,
+          "width": 1164,
+          "height": 874,
+          "exists": true
+        },
+        "wide": {
+          "filename": "ecamera.hevc",
+          "path": "/data/media/0/realdata/3e2de7ed673817c2/2024-06-15--14-30-00/1/ecamera.hevc",
+          "codec": "hevc",
+          "fps": 20,
+          "width": 1164,
+          "height": 874,
+          "exists": true
+        },
+        "driver": {
+          "filename": "dcamera.hevc",
+          "path": "/data/media/0/realdata/3e2de7ed673817c2/2024-06-15--14-30-00/1/dcamera.hevc",
+          "codec": "hevc",
+          "fps": 20,
+          "width": 864,
+          "height": 648,
+          "exists": true
+        }
+      },
+      "meta": {
+        "fixture": true
+      }
+    },
+    {
+      "segment_id": "3e2de7ed673817c2|2024-06-15--14-30-00/2",
+      "index": 2,
+      "duration_s": 60.0,
+      "cams": {
+        "road": {
+          "filename": "fcamera.hevc",
+          "path": "/data/media/0/realdata/3e2de7ed673817c2/2024-06-15--14-30-00/2/fcamera.hevc",
+          "codec": "hevc",
+          "fps": 20,
+          "width": 1164,
+          "height": 874,
+          "exists": true
+        },
+        "wide": {
+          "filename": "ecamera.hevc",
+          "path": "/data/media/0/realdata/3e2de7ed673817c2/2024-06-15--14-30-00/2/ecamera.hevc",
+          "codec": "hevc",
+          "fps": 20,
+          "width": 1164,
+          "height": 874,
+          "exists": true
+        },
+        "driver": {
+          "filename": "dcamera.hevc",
+          "path": "/data/media/0/realdata/3e2de7ed673817c2/2024-06-15--14-30-00/2/dcamera.hevc",
+          "codec": "hevc",
+          "fps": 20,
+          "width": 864,
+          "height": 648,
+          "exists": true
+        }
+      },
+      "meta": {
+        "fixture": true
+      }
+    }
+  ],
+  "meta": {
+    "fixture": true,
+    "label": "fixture",
+    "reason": "Connect/SSH credentials unavailable",
+    "cams": [
+      "road",
+      "wide",
+      "driver"
+    ]
+  }
+}

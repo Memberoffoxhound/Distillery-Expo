@@ -2,7 +2,8 @@
 
 **One-stop tinygrad distill control room** for comma mici routes → Cinque/supercombo teacher (7090 XT) → lighter stock-modelV2-I/O student (mici/QCOM) → export / eval / gated flash.
 
-> M0 = demo skeleton. No real training/GPU code yet. The pipeline emits realistic staged events so the mission-control GUI feels alive.
+> **M1** = real mici ingest thin slice (Connect + SSH + fixture) onto the typed event bus.
+> M0 demo pipeline still available. No teacher/train/flash work yet — flash stays gated.
 
 ## Hardware (v1)
 
@@ -37,15 +38,41 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** → click **Run demo** (or it auto-starts). Watch the job rail, Thinking timeline, cams placeholders, and staged events stream over WebSocket.
+Open **http://localhost:5173**.
+
+**M1 simple-user path:** Ingest pane lists mici routes (`GET /routes`) → **Ingest fixture** / **Pull mici route** (`POST /jobs/ingest`) → cams show road/wide/driver samples with route/dongle meta over `WS /ws/jobs/{id}`. Job rail shows elapsed time + weight as stages move. Flash confirm stays gated.
+
+**M0:** **Run demo** still runs the full staged pipeline (flash gated).
+
+### Ingest thin slice (M1)
+
+```bash
+# List routes (fixture when no Connect/SSH creds)
+curl -s 'http://127.0.0.1:8000/routes?source=auto' | python -m json.tool
+
+# Start ingest job — events on existing WS channel
+curl -s -X POST http://127.0.0.1:8000/jobs/ingest   -H 'Content-Type: application/json'   -d '{"source":"fixture"}' | python -m json.tool
+# → connect Expo / WS to /ws/jobs/{id}  (same channel as demo)
+```
 
 ### CLI
 
 ```bash
 source .venv/bin/activate
-dex demo      # start demo job via API
-dex stages    # list pipeline stages
+dex routes                 # list mici routes (API or --local)
+dex ingest --source fixture
+dex demo                   # full staged demo (M0)
+dex stages
 ```
+
+Env for live device paths:
+
+| Var | Purpose |
+|-----|---------|
+| `COMMA_JWT` / `CONNECT_JWT` | comma Connect auth |
+| `MICI_SSH_HOST` | mici SSH host |
+| `MICI_SSH_KEY` | optional SSH key |
+| `DISTILLERY_INGEST_FIXTURE=1` | force offline fixture |
 
 ## Layout
 
@@ -57,21 +84,26 @@ Distillery-Expo/
 │   └── web/          # Vite + React + TS mission-control GUI
 ├── packages/
 │   ├── events/       # typed event schema (shared)
-│   ├── ingest|shards|teacher|student|export|eval|deploy/  # stubs
+│   ├── ingest/       # M1 mici Connect/SSH/fixture → event bus
+│   ├── shards|teacher|student|export|eval|deploy/  # stubs
 ├── configs/default.yaml
 └── docs/ARCHITECTURE.md
 ```
 
-## M0 includes / stubbed next
+## M1 includes / stubbed next
 
 | Included now | Stubbed for later |
 |--------------|-------------------|
-| Event schema + bus | Real route ingest from mici |
-| Demo job with staged events | Shard packing |
-| FastAPI + WS streaming | Teacher on 7090 XT |
-| Rich dark Expo GUI | Student train (tinygrad) |
-| `dex demo` / `dex stages` | Real export / ONNX / QCOM |
-| Gated flash UI confirm | Eval harness + real flash |
+| Event schema + bus | Shard packing |
+| **mici ingest** (Connect / SSH / fixture) | Teacher on 7090 XT |
+| `GET /routes` + `POST /jobs/ingest` + WS | Student train (tinygrad) |
+| Demo job with staged events | Real export / ONNX / QCOM |
+| FastAPI + WS streaming | Eval harness + real flash |
+| Rich dark Expo GUI | |
+| `dex routes` / `dex ingest` / `dex demo` | |
+| Gated flash UI confirm (unchanged) | |
+
+See `docs/ARCHITECTURE.md` for M1 ingest notes.
 
 ## License
 

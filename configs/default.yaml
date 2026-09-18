@@ -1,4 +1,4 @@
-# Distillery Expo — default M0 config
+# Distillery Expo — default config (M1)
 dongle_id: "3e2de7ed673817c2"
 
 hardware:
@@ -7,6 +7,11 @@ hardware:
     cams: [road, wide, driver]
   teacher_gpu: "AMD Radeon RX 7090 XT"
   # NO Chestnut in v1
+
+ingest:
+  # Primary: Connect (COMMA_JWT) → SSH (MICI_SSH_HOST) → fixture
+  # Set force_fixture: true for offline / CI without device creds
+  force_fixture: false
 
 teacher:
   name: "Cinque/supercombo"

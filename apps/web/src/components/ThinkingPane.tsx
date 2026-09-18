@@ -1,10 +1,17 @@
 import type { DistilleryEvent } from "../types/events";
+import { EmptyState } from "./EmptyState";
 
 export function ThinkingPane({ events }: { events: DistilleryEvent[] }) {
   const decisions = events.filter((e) => e.kind === "decision").slice().reverse();
 
   if (!decisions.length) {
-    return <div className="empty">Decision timeline idle — start a demo</div>;
+    return (
+      <EmptyState
+        title="Decision timeline quiet"
+        body="When ingest or the demo chooses a route source, the rationale appears here."
+        hint="Start with Ingest fixture or Run demo."
+      />
+    );
   }
 
   return (

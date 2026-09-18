@@ -10,14 +10,17 @@ import pytest
 from distillery_ingest.discover import (
     apply_discovered_overrides,
     clear_connect_jwt,
+    clear_dongle_id,
     clear_ssh_config,
     connect_status,
     discovery_overview,
+    ensure_dongle_from_cache,
     ensure_ssh_from_cache,
     list_adb_devices,
     parse_adb_devices_output,
     probe_ssh,
     set_connect_jwt,
+    set_dongle_id,
     set_ssh_config,
     ssh_status,
 )
@@ -202,3 +205,27 @@ def test_discovery_overview_ssh_fields(monkeypatch):
     assert ssh["port"] == 2222
     assert "identity_path" in ssh
     assert "cache_path" in ssh
+
+
+def test_set_dongle_id_persist_and_status(tmp_path, monkeypatch):
+    cache = tmp_path / "dongle_id"
+    monkeypatch.setattr("distillery_ingest.discover._DONGLE_CACHE", cache)
+    monkeypatch.setattr("distillery_ingest.config._DONGLE_CACHE", cache)
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+
+    status = set_dongle_id("abcdef0123456789", persist=True)
+    assert status["configured"] is True
+    assert status["dongle_id"] == "abcdef0123456789"
+    assert cache.is_file()
+    assert os.environ.get("DISTILLERY_DONGLE_ID") == "abcdef0123456789"
+
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+    token = ensure_dongle_from_cache()
+    assert token == "abcdef0123456789"
+    assert os.environ.get("DISTILLERY_DONGLE_ID") == "abcdef0123456789"
+
+    cleared = clear_dongle_id()
+    assert cleared["configured"] is False
+    assert cleared.get("dongle_id") in (None, "")
+    assert not cache.is_file()

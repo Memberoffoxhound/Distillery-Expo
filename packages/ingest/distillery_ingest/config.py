@@ -13,14 +13,17 @@ import yaml
 # Repo root: packages/ingest/distillery_ingest/config.py → ../../../
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_CONFIG = _REPO_ROOT / "configs" / "default.yaml"
+_DONGLE_CACHE = _REPO_ROOT / ".cache" / "dongle_id"
 
-DEFAULT_DONGLE = "3e2de7ed673817c2"
 DEFAULT_CAMS = ("road", "wide", "driver")
+
+# Labeled fixture / sample-route id only — never a silent user-facing default.
+FIXTURE_DONGLE_ID = "3e2de7ed673817c2"
 
 
 @dataclass(frozen=True)
 class IngestConfig:
-    dongle_id: str = DEFAULT_DONGLE
+    dongle_id: str = ""
     cams: tuple[str, ...] = DEFAULT_CAMS
     connect_jwt: str | None = None
     connect_base_url: str = "https://api.commadotai.com"
@@ -32,8 +35,13 @@ class IngestConfig:
     repo_root: Path = field(default_factory=lambda: _REPO_ROOT)
 
     @property
+    def dongle_configured(self) -> bool:
+        return bool((self.dongle_id or "").strip())
+
+    @property
     def connect_available(self) -> bool:
-        return bool(self.connect_jwt) and not self.force_fixture
+        """Connect is live only with JWT + saved dongle (no demo default)."""
+        return bool(self.connect_jwt) and self.dongle_configured and not self.force_fixture
 
     @property
     def ssh_available(self) -> bool:
@@ -48,8 +56,28 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _hydrate_dongle_from_cache() -> str | None:
+    """If DISTILLERY_DONGLE_ID unset, load from .cache/dongle_id into process env."""
+    if os.environ.get("DISTILLERY_DONGLE_ID", "").strip():
+        return os.environ.get("DISTILLERY_DONGLE_ID", "").strip()
+    if not _DONGLE_CACHE.is_file():
+        return None
+    try:
+        cached = _DONGLE_CACHE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not cached:
+        return None
+    os.environ.setdefault("DISTILLERY_DONGLE_ID", cached)
+    return cached
+
+
 def load_ingest_config(config_path: Path | str | None = None) -> IngestConfig:
-    """Resolve dongle + cams from YAML; Connect/SSH creds from env."""
+    """Resolve cams from YAML; dongle + Connect/SSH creds from env / .cache (GUI Save).
+
+    Dongle is empty until set via POST /dongle (or DISTILLERY_DONGLE_ID / cache).
+    No hardcoded demo dongle as a user-facing default.
+    """
     path = Path(config_path) if config_path else _DEFAULT_CONFIG
     raw = _read_yaml(path)
     hardware = raw.get("hardware") or {}
@@ -57,10 +85,13 @@ def load_ingest_config(config_path: Path | str | None = None) -> IngestConfig:
     cams_raw = mici.get("cams") or list(DEFAULT_CAMS)
     cams = tuple(str(c) for c in cams_raw)
 
-    dongle = (
-        os.environ.get("DISTILLERY_DONGLE_ID")
-        or str(raw.get("dongle_id") or DEFAULT_DONGLE)
-    ).strip()
+    dongle = (os.environ.get("DISTILLERY_DONGLE_ID") or "").strip()
+    if not dongle:
+        dongle = (_hydrate_dongle_from_cache() or "").strip()
+    if not dongle:
+        # Optional operator override in YAML — empty / omitted means unset (not demo).
+        yaml_dongle = str(raw.get("dongle_id") or "").strip()
+        dongle = yaml_dongle
 
     # Prefer env; else hydrate from .cache/connect_jwt (set via POST /discover/connect)
     jwt = os.environ.get("COMMA_JWT") or os.environ.get("CONNECT_JWT") or None

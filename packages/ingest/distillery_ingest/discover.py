@@ -19,6 +19,8 @@ log = logging.getLogger(__name__)
 _JWT_CACHE = _REPO_ROOT / ".cache" / "connect_jwt"
 # SSH host/user/port/identity path (path only — not key bytes). Gitignored via .cache/.
 _SSH_CACHE = _REPO_ROOT / ".cache" / "ssh_config.json"
+# Dongle id (non-secret). Gitignored via .cache/. Empty until GUI Save / env.
+_DONGLE_CACHE = _REPO_ROOT / ".cache" / "dongle_id"
 
 
 @dataclass
@@ -134,6 +136,96 @@ def _jwt_source() -> str | None:
     if os.environ.get("CONNECT_JWT"):
         return "env"
     if _JWT_CACHE.is_file():
+        return "cache"
+    return None
+
+
+def ensure_dongle_from_cache() -> str | None:
+    """If DISTILLERY_DONGLE_ID unset, load from .cache/dongle_id into process env."""
+    existing = (os.environ.get("DISTILLERY_DONGLE_ID") or "").strip()
+    if existing:
+        return existing
+    cache = _DONGLE_CACHE
+    if not cache.is_file():
+        return None
+    try:
+        token = cache.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        log.warning("failed reading dongle cache: %s", exc)
+        return None
+    if not token:
+        return None
+    os.environ["DISTILLERY_DONGLE_ID"] = token
+    return token
+
+
+def set_dongle_id(dongle_id: str, *, persist: bool = True) -> dict[str, Any]:
+    """Store dongle id in process env (+ optional .cache file). Mirror JWT/SSH Save."""
+    value = (dongle_id or "").strip()
+    if not value:
+        raise ValueError("dongle_id must be a non-empty string")
+    os.environ["DISTILLERY_DONGLE_ID"] = value
+    cached = False
+    if persist:
+        try:
+            _DONGLE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            _DONGLE_CACHE.write_text(value + "\n", encoding="utf-8")
+            try:
+                _DONGLE_CACHE.chmod(0o600)
+            except OSError:
+                pass
+            cached = True
+        except OSError as exc:
+            log.warning("failed writing dongle cache: %s", exc)
+    status = dongle_status()
+    status["persisted"] = cached
+    return status
+
+
+def clear_dongle_id(*, clear_cache: bool = True) -> dict[str, Any]:
+    os.environ.pop("DISTILLERY_DONGLE_ID", None)
+    if clear_cache and _DONGLE_CACHE.is_file():
+        try:
+            _DONGLE_CACHE.unlink()
+        except OSError as exc:
+            log.warning("failed removing dongle cache: %s", exc)
+    return dongle_status()
+
+
+def dongle_status(cfg: IngestConfig | None = None) -> dict[str, Any]:
+    """Status for GET /dongle — no demo default; empty until Save."""
+    ensure_dongle_from_cache()
+    cfg = cfg or load_ingest_config()
+    dongle = (cfg.dongle_id or "").strip()
+    cache_path = None
+    if _DONGLE_CACHE.is_file():
+        try:
+            cache_path = str(_DONGLE_CACHE.relative_to(_REPO_ROOT))
+        except ValueError:
+            cache_path = str(_DONGLE_CACHE)
+    return {
+        "dongle_id": dongle or None,
+        "configured": bool(dongle),
+        "source": _dongle_source(),
+        "cache_path": cache_path,
+        "cams": list(cfg.cams),
+        "connect_available": cfg.connect_available,
+        "ssh_available": cfg.ssh_available,
+        "force_fixture": cfg.force_fixture,
+    }
+
+
+def _dongle_source() -> str | None:
+    if (os.environ.get("DISTILLERY_DONGLE_ID") or "").strip():
+        if _DONGLE_CACHE.is_file():
+            try:
+                cached = _DONGLE_CACHE.read_text(encoding="utf-8").strip()
+                if cached and cached == os.environ.get("DISTILLERY_DONGLE_ID", "").strip():
+                    return "env+cache"
+            except OSError:
+                pass
+        return "env"
+    if _DONGLE_CACHE.is_file():
         return "cache"
     return None
 
@@ -431,10 +523,13 @@ def discovery_overview(cfg: IngestConfig | None = None) -> dict[str, Any]:
     """Combined discovery snapshot for Expo (devices + connect + ssh + fixture)."""
     ensure_jwt_from_cache()
     ensure_ssh_from_cache()
+    ensure_dongle_from_cache()
     cfg = cfg or load_ingest_config()
     adb = list_adb_devices()
+    dongle = dongle_status(cfg)
     return {
-        "dongle_id": cfg.dongle_id,
+        "dongle_id": dongle.get("dongle_id"),
+        "dongle": dongle,
         "cams": list(cfg.cams),
         "devices": adb,
         "connect": connect_status(cfg),

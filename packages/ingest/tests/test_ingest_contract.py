@@ -21,18 +21,25 @@ def _force_fixture(monkeypatch):
     monkeypatch.delenv("MICI_SSH_HOST", raising=False)
 
 
-def test_config_resolves_dongle():
+def test_config_resolves_dongle(monkeypatch, tmp_path):
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+    monkeypatch.setattr("distillery_ingest.config._DONGLE_CACHE", tmp_path / "dongle_id")
     cfg = load_ingest_config()
-    assert cfg.dongle_id == "3e2de7ed673817c2"
+    # Empty until env / .cache / GUI Save — no demo default
+    assert cfg.dongle_id == ""
+    assert cfg.dongle_configured is False
     assert set(cfg.cams) >= {"road", "wide", "driver"}
 
 
-def test_resolve_falls_back_to_fixture():
+def test_resolve_falls_back_to_fixture(monkeypatch, tmp_path):
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+    monkeypatch.setattr("distillery_ingest.config._DONGLE_CACHE", tmp_path / "dongle_id")
     src = resolve_source(prefer="auto")
     assert src.name == "fixture"
     routes = src.list_routes()
     assert len(routes) >= 1
     assert routes[0].meta.get("fixture") is True or routes[0].meta.get("label") == "fixture"
+    # Labeled fixture sample keeps its fixture dongle id
     assert routes[0].dongle_id == "3e2de7ed673817c2"
 
 
@@ -103,6 +110,7 @@ def test_explicit_ssh_empty_no_fixture_swap(monkeypatch):
     """prefer=ssh + empty realdata → honest empty, never silent fixture."""
     monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
     monkeypatch.setenv("MICI_SSH_HOST", "192.168.1.50")
+    monkeypatch.setenv("DISTILLERY_DONGLE_ID", "aabbccddeeff0011")
 
     from distillery_ingest.config import load_ingest_config
     from distillery_ingest.resolve import list_routes
@@ -127,6 +135,7 @@ def test_explicit_ssh_error_no_fixture_swap(monkeypatch):
     """prefer=ssh + SSH failure → honest empty/error, not fixture routes."""
     monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
     monkeypatch.setenv("MICI_SSH_HOST", "192.168.1.50")
+    monkeypatch.setenv("DISTILLERY_DONGLE_ID", "aabbccddeeff0011")
 
     from distillery_ingest.config import load_ingest_config
     from distillery_ingest.resolve import list_routes
@@ -152,6 +161,7 @@ def test_auto_still_falls_back_to_fixture_on_ssh_empty(monkeypatch):
     """prefer=auto keeps labeled fixture fallback when live is empty."""
     monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
     monkeypatch.setenv("MICI_SSH_HOST", "192.168.1.50")
+    monkeypatch.setenv("DISTILLERY_DONGLE_ID", "aabbccddeeff0011")
     monkeypatch.delenv("COMMA_JWT", raising=False)
     monkeypatch.delenv("CONNECT_JWT", raising=False)
 
@@ -173,3 +183,61 @@ def test_auto_still_falls_back_to_fixture_on_ssh_empty(monkeypatch):
     src, routes = result
     assert src.name == "fixture"
     assert len(routes) >= 1
+
+
+def test_explicit_connect_unset_dongle_no_fixture(monkeypatch, tmp_path):
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+    monkeypatch.setenv("COMMA_JWT", "testjwtTOKEN12345678")
+    monkeypatch.setattr("distillery_ingest.config._DONGLE_CACHE", tmp_path / "dongle_id")
+
+    from distillery_ingest.config import load_ingest_config
+    from distillery_ingest.resolve import list_routes
+
+    cfg = load_ingest_config()
+    assert cfg.dongle_configured is False
+    result = list_routes(cfg, prefer="connect", limit=5)
+    src, routes = result
+    assert src.name == "connect"
+    assert routes == []
+    assert result.empty_reason == "dongle_id_required"
+    assert result.message and "Dongle ID required" in result.message
+
+
+def test_set_dongle_then_connect_uses_id(monkeypatch, tmp_path):
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+    monkeypatch.setenv("COMMA_JWT", "testjwtTOKEN12345678")
+    cache = tmp_path / "dongle_id"
+    monkeypatch.setattr("distillery_ingest.config._DONGLE_CACHE", cache)
+    monkeypatch.setattr("distillery_ingest.discover._DONGLE_CACHE", cache)
+
+    from distillery_ingest.discover import set_dongle_id
+    from distillery_ingest.config import load_ingest_config
+    from distillery_ingest.models import RouteInfo
+    from distillery_ingest.resolve import list_routes
+    from distillery_ingest.sources.connect import ConnectRouteSource
+
+    status = set_dongle_id("1122334455667788", persist=True)
+    assert status["dongle_id"] == "1122334455667788"
+    assert cache.is_file()
+
+    def _list(self, *, limit=20):
+        return [
+            RouteInfo(
+                route_id=f"{self.cfg.dongle_id}|x",
+                dongle_id=self.cfg.dongle_id,
+                display_name="x",
+                source="connect",
+                segment_count=0,
+                meta={"label": "connect", "fixture": False},
+            )
+        ]
+
+    monkeypatch.setattr(ConnectRouteSource, "list_routes", _list)
+    cfg = load_ingest_config()
+    assert cfg.dongle_id == "1122334455667788"
+    result = list_routes(cfg, prefer="connect", limit=3)
+    src, routes = result
+    assert src.name == "connect"
+    assert routes[0].dongle_id == "1122334455667788"

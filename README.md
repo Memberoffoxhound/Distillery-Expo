@@ -15,7 +15,7 @@
 
 **Design locks:** No Chestnut in v1 · Student stays stock-modelV2 I/O · Flash always gated · Expo GUI is primary; `dex` is the engine CLI.
 
-Dongle default: `3e2de7ed673817c2` (see `configs/default.yaml`).
+Dongle: empty until GUI Save (`POST /dongle`) or `DISTILLERY_DONGLE_ID` / `.cache/dongle_id` (no demo default).
 
 ## Quickstart — bootstrap (bare machine)
 

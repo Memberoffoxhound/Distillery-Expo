@@ -1,5 +1,5 @@
 # Distillery Expo — default config (M1)
-dongle_id: "3e2de7ed673817c2"
+# dongle_id: set via GUI Save (POST /dongle) or DISTILLERY_DONGLE_ID — no demo default
 
 hardware:
   mici:

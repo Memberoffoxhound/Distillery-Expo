@@ -50,6 +50,13 @@ export default function App() {
           <button
             className="primary"
             disabled={busy}
+            onClick={() => job.startPipeline({ source: "fixture" })}
+            title="POST /jobs/pipeline — teach→train→export→eval→gated flash"
+          >
+            Run distill
+          </button>
+          <button
+            disabled={busy}
             onClick={() => job.startIngest({ source: "fixture" })}
             title="POST /jobs/ingest {source:fixture}"
           >
@@ -65,7 +72,7 @@ export default function App() {
           <button
             disabled={busy}
             onClick={() => job.startDemo()}
-            title="Full M0 staged demo (flash stays gated)"
+            title="Legacy staged demo (flash stays gated)"
           >
             Run demo
           </button>

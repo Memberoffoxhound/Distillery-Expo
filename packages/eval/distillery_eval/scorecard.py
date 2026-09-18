@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from distillery_eval.config import EvalConfig
+from distillery_student.hours import estimate_driving_hours, hours_meet_floor
 
 
 def _mean(xs: list[float]) -> float:

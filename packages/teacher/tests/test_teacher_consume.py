@@ -48,6 +48,7 @@ def test_consume_ignores_small_only(tmp_path, monkeypatch):
     assert art.name == BIG_TEACHER_NAME
     assert art.source == "fixture"
     assert art.live is False
+    assert art.ok is False
     assert "driving_supercombo" in (art.detail or "")
     assert "no small-model fallback" in art.detail or "ignored" in art.detail
 
@@ -61,6 +62,7 @@ def test_checksum_mismatch_raises_and_consume_fixtures(tmp_path, monkeypatch):
     art = consume_big_teacher_for_teach(tmp_path, force_fixture=False)
     assert art.source == "fixture"
     assert art.live is False
+    assert art.ok is False
     assert art.error
     assert "checksum" in art.error.lower() or "mismatch" in art.error.lower()
 
@@ -70,4 +72,16 @@ def test_force_fixture_never_claims_live(tmp_path):
     art = consume_big_teacher_for_teach(tmp_path, force_fixture=True)
     assert art.source == "fixture"
     assert art.live is False
+    assert art.ok is False
     assert art.name == BIG_TEACHER_NAME
+
+
+def test_ingest_fixture_env_does_not_force_teacher(tmp_path, monkeypatch):
+    """DISTILLERY_INGEST_FIXTURE alone must not soft-force teacher fixture."""
+    monkeypatch.delenv("DISTILLERY_TEACHER_FIXTURE", raising=False)
+    monkeypatch.setenv("DISTILLERY_INGEST_FIXTURE", "1")
+    _write_craig_cache(tmp_path, b"LIVE_CACHE_STILL_PREFERRED" * 200)
+    art = consume_big_teacher_for_teach(tmp_path, force_fixture=False)
+    assert art.live is True
+    assert art.ok is True
+    assert art.source != "fixture"

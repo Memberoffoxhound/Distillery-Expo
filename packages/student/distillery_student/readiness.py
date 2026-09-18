@@ -1,6 +1,10 @@
 """Train-all readiness gaps for Craig's one-click path.
 
 Structured ``check_train_readiness(...) -> {ok, gaps:[{code,message}]}``.
+
+Happy path prefers verified live ``big_driving_supercombo`` under
+``artifacts/teachers/``. Fixture teacher is a gap for live train unless an
+explicit toy / force_fixture CI override is set.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ def check_train_readiness(
     ``gaps`` codes (stable):
       - ``insufficient_hours`` — driving data below floor (and not toy-allowed)
       - ``device_not_ready`` — tinygrad device probe not ready
-      - ``teacher_not_selected`` — no comma-master / Cinque teacher selected
+      - ``teacher_not_selected`` — no live comma-master big teacher / cache
     """
     cfg = cfg or load_student_config()
     soft_dir = Path(soft_labels_dir) if soft_labels_dir else cfg.soft_labels_dir
@@ -44,7 +48,6 @@ def check_train_readiness(
     if toy is False and allow_toy is None:
         toy = toy_train_allowed(config_allow=cfg.allow_toy_train)
     floor = float(min_hours if min_hours is not None else cfg.min_train_hours)
-
     gaps: list[dict[str, str]] = []
 
     soft = load_soft_label_summary(soft_dir)
@@ -59,7 +62,7 @@ def check_train_readiness(
             {
                 "code": "insufficient_hours",
                 "message": (
-                    f"Need ≥{floor:g}h driving data; have "
+                    f"Need >={floor:g}h driving data; have "
                     f"{hours_info.get('hours')}h "
                     f"(known={hours_info.get('known')}). "
                     "Set DISTILLERY_ALLOW_TOY_TRAIN=1 for CI only "
@@ -107,14 +110,14 @@ def check_train_readiness(
                 "message": (
                     "No comma-master teacher selected "
                     f"(requested={teacher_name!r}). "
-                    "Need big_driving_supercombo (comma master · big_driving_supercombo); "
+                    "Need live big_driving_supercombo "
+                    "(comma master · big_driving_supercombo); "
                     "no driving_supercombo fallback; no Chestnut."
                 ),
             }
         )
     elif teacher_selected is not None and teacher_selected.get("source") == "fixture":
-        # Fixture teacher is selectable for CI but still a gap for live train_all
-        # unless toy override is on — Craig can see the gap and decide.
+        # Fixture teacher is a gap for live train unless toy CI override.
         if not toy:
             gaps.append(
                 {
@@ -122,10 +125,11 @@ def check_train_readiness(
                     "message": (
                         "comma-master teacher is fixture-only "
                         f"({teacher_selected.get('label') or teacher_selected.get('name')}, "
-                        "live=false). Need live big_driving_supercombo "
-                        "(comma master · big_driving_supercombo) — "
+                        "live=false). Need live big_driving_supercombo cache under "
+                        "artifacts/teachers/ (comma master · big_driving_supercombo) — "
                         "no driving_supercombo fallback. "
-                        "Or set DISTILLERY_ALLOW_TOY_TRAIN=1 for CI."
+                        "Or set DISTILLERY_ALLOW_TOY_TRAIN=1 for CI only "
+                        "(with DISTILLERY_TEACHER_FIXTURE / force_fixture)."
                     ),
                 }
             )
@@ -134,7 +138,7 @@ def check_train_readiness(
     try:
         from distillery_teacher.download import BIG_TEACHER_NAME, cached_big_teacher_ok
 
-        cached = cached_big_teacher_ok()
+        cached = None if fixture else cached_big_teacher_ok()
         if cached is not None:
             teacher_artifact = cached.as_dict()
             if teacher_selected is not None:
@@ -147,13 +151,13 @@ def check_train_readiness(
                 teacher_selected["live"] = True
                 teacher_selected["source"] = teacher_artifact.get("source")
         elif teacher_selected is not None:
-            # No on-disk cache yet — keep listing label; download happens in teach/train_all
+            # No on-disk live cache — prefer gap for live train (unless CI override).
             teacher_selected = dict(teacher_selected)
             teacher_selected.setdefault(
                 "label",
                 (
                     f"comma master · {BIG_TEACHER_NAME}"
-                    if teacher_selected.get("live")
+                    if teacher_selected.get("live") and teacher_selected.get("source") != "fixture"
                     else f"fixture · {BIG_TEACHER_NAME}"
                 ),
             )
@@ -166,8 +170,29 @@ def check_train_readiness(
                 "label": f"fixture · {BIG_TEACHER_NAME}"
                 if teacher_selected.get("source") == "fixture"
                 else f"pending · {BIG_TEACHER_NAME}",
-                "detail": "not cached under artifacts/teachers/ yet (pulled on teach/train_all)",
+                "detail": (
+                    "not cached under artifacts/teachers/ — "
+                    "pull live big_driving_supercombo (POST /teachers/pull) "
+                    "or set DISTILLERY_TEACHER_FIXTURE=1 for CI only"
+                ),
             }
+            # Missing live cache is a gap unless explicitly on fixture/toy CI path.
+            if not fixture and not toy and not any(
+                g["code"] == "teacher_not_selected" for g in gaps
+            ):
+                gaps.append(
+                    {
+                        "code": "teacher_not_selected",
+                        "message": (
+                            "Live big_driving_supercombo not cached under "
+                            "artifacts/teachers/. Happy path: POST /teachers/pull "
+                            "or teach ensure. Fixture is last-resort CI only "
+                            "(DISTILLERY_TEACHER_FIXTURE=1 / force_fixture + "
+                            "DISTILLERY_ALLOW_TOY_TRAIN=1); "
+                            "no driving_supercombo fallback; no Chestnut."
+                        ),
+                    }
+                )
     except Exception:  # noqa: BLE001
         teacher_artifact = None
 
@@ -182,6 +207,7 @@ def check_train_readiness(
         "teacher_artifact": teacher_artifact,
         "min_train_hours": floor,
         "allow_toy": bool(toy),
+        "force_fixture": bool(fixture),
         "live": False,
         "licensed": False,
     }

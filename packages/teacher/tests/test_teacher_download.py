@@ -36,6 +36,7 @@ def test_ensure_fixture_labeled(tmp_path, monkeypatch):
     monkeypatch.setenv("DISTILLERY_TEACHER_FIXTURE", "1")
     st = ensure_big_teacher_onnx(tmp_path, force_fixture=True)
     assert st.live is False
+    assert st.ok is False
     assert st.source == "fixture"
     assert st.name == BIG_TEACHER_NAME
     assert "fixture" in st.label

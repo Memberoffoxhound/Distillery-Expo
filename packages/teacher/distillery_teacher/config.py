@@ -48,14 +48,13 @@ def load_teacher_config(config_path: Path | str | None = None) -> TeacherConfig:
     if not out_path.is_absolute():
         out_path = _REPO_ROOT / out_path
 
+    # Explicit teacher CI flag / yaml only — ingest fixture must not soft-force ML.
     force = os.environ.get("DISTILLERY_TEACHER_FIXTURE", "").lower() in (
         "1",
         "true",
         "yes",
     )
     if block.get("force_fixture"):
-        force = True
-    if os.environ.get("DISTILLERY_INGEST_FIXTURE", "").lower() in ("1", "true", "yes"):
         force = True
 
     return TeacherConfig(

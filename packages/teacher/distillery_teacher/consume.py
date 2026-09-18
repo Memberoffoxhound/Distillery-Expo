@@ -5,8 +5,9 @@ Exact contract (Craig PR #22 / download.py):
   artifacts/teachers/big_driving_supercombo.onnx.sha256   # bare hex or sha256sum line
   artifacts/teachers/big_driving_supercombo.json          # optional meta
 
-Verify checksum before teach uses the file. Missing / mismatch → labeled
-fixture (live=false / not licensed). Never driving_supercombo. No Chestnut.
+Happy path = verified live cache. Missing / mismatch / explicit CI flag ->
+labeled fixture last-resort (live=false / not licensed; ok=False). Never the
+default. Never driving_supercombo. No Chestnut.
 """
 
 from __future__ import annotations
@@ -35,8 +36,9 @@ def _env_truthy(name: str) -> bool:
 
 
 def _fixture_status(*, reason: str, error: str | None = None) -> TeacherArtifactStatus:
+    # Last-resort only — never soft-sell as a valid live teach outcome.
     return TeacherArtifactStatus(
-        ok=True,  # fixture path is a valid teach outcome (honest, labeled)
+        ok=False,
         live=False,
         cached=False,
         path=None,
@@ -45,7 +47,8 @@ def _fixture_status(*, reason: str, error: str | None = None) -> TeacherArtifact
         label=f"fixture · {BIG_TEACHER_NAME}",
         detail=(
             f"fixture · {BIG_TEACHER_NAME} — {reason} "
-            f"(live=false / not licensed; no driving_supercombo fallback; no Chestnut)"
+            f"(live=false / not licensed; last-resort CI only; "
+            f"no driving_supercombo fallback; no Chestnut)"
         ),
         error=error,
     )
@@ -55,7 +58,7 @@ def verify_cached_big_teacher(dest_dir: Path | None = None) -> TeacherArtifactSt
     """Strict checksum verify of Craig's cache paths. No download, no small-model scan.
 
     Raises TeacherChecksumError when ONNX exists but sidecar mismatches.
-    Returns fixture status when cache missing.
+    Returns labeled fixture status (ok=False) when cache missing — not a live pass.
     """
     onnx, sha_path, _meta = artifact_paths(dest_dir)
     if not onnx.is_file() or onnx.stat().st_size < 1024:
@@ -110,13 +113,13 @@ def consume_big_teacher_for_teach(
 ) -> TeacherArtifactStatus:
     """Resolve teacher artifact for teach soft-label pass.
 
-    Prefer verified Craig cache; on missing/checksum-fail → labeled fixture.
+    Prefer verified live cache under artifacts/teachers/.
+    Fixture only via explicit force_fixture / DISTILLERY_TEACHER_FIXTURE (CI).
+    On missing/checksum-fail -> labeled fixture (ok=False; never default).
     Never returns / selects driving_supercombo.
     """
-    if force_fixture or _env_truthy("DISTILLERY_TEACHER_FIXTURE") or _env_truthy(
-        "DISTILLERY_INGEST_FIXTURE"
-    ):
-        return _fixture_status(reason="force_fixture / env")
+    if force_fixture or _env_truthy("DISTILLERY_TEACHER_FIXTURE"):
+        return _fixture_status(reason="force_fixture / DISTILLERY_TEACHER_FIXTURE")
 
     try:
         return verify_cached_big_teacher(dest_dir)

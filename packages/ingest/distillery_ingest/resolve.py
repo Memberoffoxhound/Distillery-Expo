@@ -81,6 +81,8 @@ def _ssh_empty_message(cfg: IngestConfig, *, error: str | None = None) -> tuple[
 def _connect_empty_message(cfg: IngestConfig, *, error: str | None = None) -> tuple[str, str]:
     if error:
         return f"Connect error · {error}", "connect_error"
+    if not cfg.dongle_id:
+        return "Dongle ID not set · Save Dongle in Ingest, then Use Connect", "dongle_not_configured"
     if not cfg.connect_jwt:
         return "Connect not configured · paste JWT then Save", "connect_not_configured"
     return "Connect ok · 0 routes for this dongle", "empty_connect"

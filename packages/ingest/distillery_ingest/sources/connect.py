@@ -55,7 +55,9 @@ class ConnectRouteSource(RouteSource):
         Primary endpoint shape: GET /v1/devices/{dongle}/routes
         (falls back gracefully on HTTP errors — caller should use fixture).
         """
-        dongle = self.cfg.dongle_id
+        dongle = (self.cfg.dongle_id or "").strip()
+        if not dongle:
+            return []
         data = self._get(f"/v1/devices/{dongle}/routes?limit={limit}")
         rows = data if isinstance(data, list) else data.get("routes") or data.get("data") or []
         out: list[RouteInfo] = []
@@ -66,7 +68,9 @@ class ConnectRouteSource(RouteSource):
         return out
 
     def get_route(self, route_id: str) -> RouteInfo | None:
-        dongle = self.cfg.dongle_id
+        dongle = (self.cfg.dongle_id or "").strip()
+        if not dongle:
+            return None
         # Canonical Connect route key is often fullname = dongle|date
         path = f"/v1/devices/{dongle}/routes/{route_id}"
         try:

@@ -291,7 +291,7 @@ export function TeacherPane({ events }: { events: DistilleryEvent[] }) {
           <EmptyState
             title="Waiting to teach"
             body="Shards are ready. This pane stays quiet until the pipeline emits teach stage, progress, or metric events."
-            hint={`Run demo / /jobs/teach · teacher locked to comma master · ${BIG_TEACHER_NAME}`}
+            hint={`Pull live teacher · /teachers/pull · locked to comma master · ${BIG_TEACHER_NAME}`}
           />
           {teacherList.length > 0 && (
             <div className="teacher-list" aria-label="Available teachers">

@@ -26,9 +26,11 @@ from distillery_ingest.discover import (
     apply_discovered_overrides,
     connect_status,
     discovery_overview,
+    dongle_status,
     list_adb_devices,
     probe_ssh,
     set_connect_jwt,
+    set_dongle_id,
     set_ssh_config,
     ssh_status,
 )
@@ -147,6 +149,12 @@ class TeacherPullRequest(BaseModel):
 class ConnectJwtRequest(BaseModel):
     """Set comma Connect JWT without shell/env archaeology."""
     jwt: str = Field(..., min_length=1)
+    persist: bool = True
+
+
+class DongleIdRequest(BaseModel):
+    """Set mici dongle id without env archaeology (mirrors Connect JWT Save)."""
+    dongle_id: str = Field(..., min_length=8)
     persist: bool = True
 
 
@@ -1155,6 +1163,7 @@ async def list_stages() -> dict[str, list[str]]:
 @app.get("/dongle")
 async def get_dongle() -> dict[str, Any]:
     """Dongle + Connect/SSH posture, plus ADB readiness for Expo status chips."""
+    base = dongle_status()
     cfg = load_ingest_config()
     adb = list_adb_devices()
     adb_available = bool(adb.get("adb_available"))
@@ -1166,7 +1175,8 @@ async def get_dongle() -> dict[str, Any]:
     else:
         adb_status = "ready"
     return {
-        "dongle_id": cfg.dongle_id,
+        **base,
+        "dongle_id": cfg.dongle_id or "",
         "cams": list(cfg.cams),
         "connect_available": cfg.connect_available,
         "ssh_available": cfg.ssh_available,
@@ -1175,6 +1185,39 @@ async def get_dongle() -> dict[str, Any]:
         "adb_status": adb_status,
         "adb_device_count": len(devices),
     }
+
+
+@app.post("/dongle")
+async def post_dongle(body: DongleIdRequest) -> dict[str, Any]:
+    """Set dongle id (process env + optional .cache/dongle_id). Same shape as JWT Save."""
+    try:
+        status = set_dongle_id(body.dongle_id, persist=body.persist)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Enrich with ADB chips fields (same as GET /dongle)
+    adb = list_adb_devices()
+    adb_available = bool(adb.get("adb_available"))
+    devices = adb.get("devices") or []
+    if not adb_available:
+        adb_status = "not_on_path"
+    elif not adb.get("ok", False):
+        adb_status = "error"
+    else:
+        adb_status = "ready"
+    status.update(
+        {
+            "adb_available": adb_available,
+            "adb_status": adb_status,
+            "adb_device_count": len(devices),
+        }
+    )
+    return status
+
+
+@app.post("/discover/dongle")
+async def discover_dongle_set(body: DongleIdRequest) -> dict[str, Any]:
+    """Alias under /discover/* — mirrors POST /discover/connect."""
+    return await post_dongle(body)
 
 
 @app.get("/discover")

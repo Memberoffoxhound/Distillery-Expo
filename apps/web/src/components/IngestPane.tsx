@@ -7,6 +7,7 @@ import {
   fetchRoutes,
   formatRouteLength,
   postDiscoverConnect,
+  saveDongleId,
   saveDiscoverSsh,
   testDiscoverSsh,
   type DiscoverDevice,
@@ -89,7 +90,7 @@ function connectionState(
     return {
       label: "Needs JWT",
       tone: "needs-jwt",
-      detail: "Connect needs COMMA_JWT / CONNECT_JWT — or use Find on LAN / fixture.",
+      detail: "Connect needs COMMA_JWT / CONNECT_JWT — paste JWT below, or Find on LAN.",
     };
   }
 
@@ -119,14 +120,13 @@ function connectionState(
       return {
         label: "Offline",
         tone: "offline",
-        detail:
-          "No ADB or SSH path yet — install adb / configure SSH below, or use fixture.",
+        detail: "No ADB or SSH path yet — install adb or configure SSH below.",
       };
     }
     return {
       label: "No devices",
       tone: "empty",
-      detail: "LAN scan returned nothing. Pick fixture, or check ADB/SSH.",
+      detail: "LAN scan returned nothing. Check ADB/SSH, or Save Dongle + Use Connect.",
     };
   }
 
@@ -165,7 +165,7 @@ function connectionState(
   return {
     label: "Offline",
     tone: "offline",
-    detail: "No Connect / ADB / SSH yet — fixture is the safe path.",
+    detail: "No Connect / ADB / SSH yet — Save Dongle + JWT, or Find on LAN.",
   };
 }
 
@@ -186,12 +186,13 @@ export function IngestPane({
   const [listError, setListError] = useState<string | null>(null);
   const [routesMessage, setRoutesMessage] = useState<string | null>(null);
   const [emptyReason, setEmptyReason] = useState<string | null>(null);
-  const [prefer, setPrefer] = useState<RouteSource>("fixture");
-  const [mode, setMode] = useState<DiscoverMode>("fixture");
+  const [prefer, setPrefer] = useState<RouteSource>("connect");
+  const [mode, setMode] = useState<DiscoverMode>("idle");
   const [lanNote, setLanNote] = useState<string | null>(null);
 
   const [pickedDevice, setPickedDevice] = useState<string | null>(null);
   const [discover, setDiscover] = useState<DiscoverOverview | null>(null);
+  const [dongleDraft, setDongleDraft] = useState("");
   const [jwtDraft, setJwtDraft] = useState("");
   const [sshHost, setSshHost] = useState("");
   const [sshUser, setSshUser] = useState("comma");
@@ -245,6 +246,9 @@ export function IngestPane({
         })),
       };
       setDongle(enriched);
+      if (enriched.dongle_id) {
+        setDongleDraft((prev) => (prev.trim() ? prev : enriched.dongle_id));
+      }
       // Explicit source=ssh|connect: never present fixture rows as live SSH/Connect.
       const askedLive = source === "ssh" || source === "connect";
       const swappedToFixture = askedLive && r.source === "fixture";
@@ -252,7 +256,7 @@ export function IngestPane({
       setListSource(swappedToFixture ? source : r.source);
       setRoutesMessage(
         swappedToFixture
-          ? "SSH/Connect returned fixture unexpectedly — showing empty until you pick Show fixture."
+          ? "SSH/Connect returned fixture unexpectedly — showing empty (live path only)."
           : r.message ?? null
       );
       setEmptyReason(swappedToFixture ? "refused_fixture_swap" : r.empty_reason ?? null);
@@ -285,7 +289,7 @@ export function IngestPane({
           // Honest SSH empty beats ADB chatter — Phil: connected but 0 routes under realdata.
           setLanNote(
             r.message ||
-              "SSH ok · 0 routes under /data/media/0/realdata — record a drive, verify path, or use fixture."
+              "SSH ok · 0 routes under /data/media/0/realdata — record a drive, then Refresh."
           );
         } else if (adbDevices.length > 0) {
           setLanNote(
@@ -293,10 +297,10 @@ export function IngestPane({
           );
         } else if (!enriched.ssh_available && shown.length === 0) {
           setLanNote(
-            "No ADB devices and SSH not configured. Use Connect JWT or fixture."
+            "No ADB devices and SSH not configured. Save Dongle + JWT, or configure SSH."
           );
         } else if (shown.length === 0) {
-          setLanNote("Discovery ok, but no routes returned. Try Connect or fixture.");
+          setLanNote("Discovery ok, but no routes returned. Try Use Connect or Find on LAN.");
         } else {
           setLanNote(null);
         }
@@ -321,7 +325,8 @@ export function IngestPane({
   }, [pickedDevice]);
 
   useEffect(() => {
-    void load("fixture", "fixture");
+    // Live path first — never boot into fixture theater.
+    void load("connect", "connect");
   }, [load]);
 
   const findOnLan = () => {
@@ -346,6 +351,21 @@ export function IngestPane({
       await load("connect", "connect");
     } catch (e) {
       setListError(e instanceof Error ? e.message : "Connect JWT failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveDongle = async () => {
+    const id = dongleDraft.trim();
+    if (!id) return;
+    setLoading(true);
+    try {
+      const info = await saveDongleId(id, true);
+      setDongleDraft(info.dongle_id || id);
+      await load("connect", "connect");
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : "Dongle ID save failed");
     } finally {
       setLoading(false);
     }
@@ -434,11 +454,11 @@ export function IngestPane({
   const sshConfigured = Boolean(discover?.ssh?.configured || discover?.ssh?.host);
 
   return (
-    <div className="ingest-pane">
+    <div className={`ingest-pane${routes.length > 0 ? " has-routes" : ""}`}>
       <div className="ingest-head">
         <div className="ingest-dongle">
           <span className="k">dongle</span>
-          <span className="v mono">{dongle?.dongle_id ?? "…"}</span>
+          <span className="v mono">{dongle?.dongle_id ? dongle.dongle_id : "not set"}</span>
           <span className={`conn-chip tone-${conn.tone}`} title={conn.detail}>
             {conn.label}
           </span>
@@ -506,6 +526,25 @@ export function IngestPane({
 
       <p className="ingest-conn-detail muted">{conn.detail}</p>
 
+      <div className="ingest-dongle-row" aria-label="Dongle ID">
+        <input
+          type="text"
+          placeholder="Dongle ID (required for Connect)"
+          value={dongleDraft}
+          onChange={(e) => setDongleDraft(e.target.value)}
+          disabled={loading}
+          aria-label="Dongle ID"
+          className="mono"
+        />
+        <button
+          disabled={loading || !dongleDraft.trim() || dongleDraft.trim().length < 8}
+          onClick={() => void saveDongle()}
+          title="POST /dongle {dongle_id, persist}"
+        >
+          Save Dongle
+        </button>
+      </div>
+
       <div className="ingest-actions primary-row">
         <button
           className="primary"
@@ -523,9 +562,24 @@ export function IngestPane({
         >
           Use Connect
         </button>
+        <button
+          className="primary"
+          disabled={busy || loading || !selected}
+          onClick={() => onIngest({ source: prefer, routeId: selected })}
+          title="Ingest the selected live route"
+        >
+          Ingest selected
+        </button>
+        <button
+          disabled={loading}
+          onClick={() => void load(prefer === "fixture" ? "connect" : prefer, mode === "fixture" ? "connect" : mode)}
+          title="Refresh route list"
+        >
+          Refresh
+        </button>
       </div>
 
-      {(mode === "connect" || (!connectConfigured && mode !== "fixture")) && (
+      {(mode === "connect" || mode === "idle" || !connectConfigured) && (
         <div className="ingest-jwt-row">
           <input
             type="password"
@@ -545,7 +599,165 @@ export function IngestPane({
         </div>
       )}
 
-      {(mode === "lan" || (!sshConfigured && mode !== "fixture")) && (
+      {discoveredDevices.length > 0 && (
+        <div className="device-picks" aria-label="Discovered devices">
+          <span className="k">Devices</span>
+          <div className="device-pick-list">
+            {discoveredDevices.map((dev, i) => {
+              const id = String(dev.id ?? dev.name ?? i);
+              const kind = String(dev.kind ?? "device");
+              const online = dev.online !== false;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={`device-pick ${online ? "" : "off"}${pickedDevice === id ? " selected" : ""}`}
+                  disabled={busy || !online}
+                  aria-pressed={pickedDevice === id}
+                  title={`Select discovered ${kind} → /routes?device=`}
+                  onClick={() => pickDevice(id)}
+                >
+                  <span className="device-pick-name">
+                    {String(dev.name ?? dev.id ?? "device")}
+                  </span>
+                  <span className="device-pick-kind mono">{kind}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {lanNote && <div className="ingest-note">{lanNote}</div>}
+
+      {listError && (
+        <div className="ingest-error">
+          Routes unavailable ({listError}). Is the API on :8000?
+        </div>
+      )}
+
+      {/* Routes are the hero — above SSH / fixture so TV layout cannot clip them away */}
+      <div className="route-list" role="listbox" aria-label="mici routes">
+        {loading && (
+          <EmptyState
+            title={mode === "lan" ? "Scanning LAN…" : "Loading routes"}
+            body={
+              mode === "lan"
+                ? "Looking for mici over ADB and SSH. Pick a found device — no manual IP dig."
+                : mode === "connect"
+                  ? "Asking comma Connect for routes on this dongle."
+                  : "Asking the API for mici routes."
+            }
+          />
+        )}
+        {!loading && !listError && routes.length === 0 && mode === "lan" && (
+          <EmptyState
+            title={
+              listSource === "ssh" || sshConfigured || dongle?.ssh_available
+                ? "SSH · 0 routes"
+                : "Nothing on LAN yet"
+            }
+            body={
+              routesMessage ||
+              (listSource === "ssh" || sshConfigured || dongle?.ssh_available
+                ? "SSH ok · 0 routes under /data/media/0/realdata"
+                : "No ADB or SSH routes found. Save Dongle + Use Connect, or configure SSH.")
+            }
+            hint={
+              emptyReason
+                ? `empty_reason=${emptyReason}`
+                : "GET /routes?source=ssh"
+            }
+            actions={
+              <>
+                <button
+                  type="button"
+                  disabled={loading}
+                  title="Record a drive on mici, then Refresh"
+                  onClick={() => void load("ssh", "lan", pickedDevice)}
+                >
+                  Record a drive / Refresh
+                </button>
+                <button
+                  type="button"
+                  disabled={loading}
+                  title="Re-check SSH host and /data/media/0/realdata"
+                  onClick={() => void testSsh()}
+                >
+                  Verify path
+                </button>
+                <button
+                  type="button"
+                  className="fixture-btn"
+                  disabled={loading}
+                  title="Labeled offline fallback only"
+                  onClick={useFixture}
+                >
+                  Offline fixture
+                </button>
+              </>
+            }
+          />
+        )}
+        {!loading && !listError && routes.length === 0 && mode === "connect" && (
+          <EmptyState
+            title={dongle?.connect_available ? "No Connect routes" : "Needs JWT"}
+            body={
+              dongle?.connect_available
+                ? "Connect is available but returned an empty list for this dongle."
+                : (!dongle?.dongle_id
+                  ? "Save your Dongle ID above, then paste JWT / Use Connect."
+                  : "comma Connect isn’t ready (JWT). Save JWT above, or Find on LAN.")
+            }
+            hint="GET /routes?source=connect"
+          />
+        )}
+        {!loading && !listError && routes.length === 0 && mode !== "lan" && mode !== "connect" && (
+          <EmptyState
+            title="No routes yet"
+            body="Nothing listed yet. Save Dongle, then Find on LAN or Use Connect."
+            hint="GET /routes?source=connect"
+          />
+        )}
+        {!loading &&
+          routes.map((r) => {
+            const active = selected === r.route_id;
+            const fixture =
+              r.source === "fixture" ||
+              Boolean(r.meta?.fixture) ||
+              r.meta?.label === "fixture" ||
+              listSource === "fixture";
+            return (
+              <button
+                key={r.route_id}
+                type="button"
+                role="option"
+                aria-selected={active}
+                className={`route-row ${active ? "selected" : ""} ${fixture ? "is-fixture" : ""}`}
+                onClick={() => setSelected(r.route_id)}
+                disabled={busy}
+              >
+                <div className="route-row-top">
+                  <span className="route-name">{r.display_name}</span>
+                  {fixture && (
+                    <span className="badge badge-fixture" title="Labeled fallback — not live">
+                      fixture
+                    </span>
+                  )}
+                </div>
+                <div className="route-row-meta mono">
+                  <span>{shortRouteId(r.route_id)}</span>
+                  <span>{r.segment_count ?? 0} segs</span>
+                  <span>{formatRouteLength(r.length_s)}</span>
+                </div>
+              </button>
+            );
+          })}
+      </div>
+
+
+      <details className="ingest-ssh-details" open={mode === "lan" || (!sshConfigured && mode !== "fixture")}>
+        <summary>SSH / LAN config</summary>
         <div className="ingest-ssh-row" aria-label="SSH configuration">
           <div className="ingest-ssh-grid">
             <input
@@ -601,191 +813,25 @@ export function IngestPane({
           </div>
           {sshProbeNote && <div className="ingest-note">{sshProbeNote}</div>}
         </div>
-      )}
+      </details>
 
-      <div className="ingest-actions secondary-row">
+      <div className="ingest-actions secondary-row fixture-last-resort">
+        <button
+          disabled={loading}
+          onClick={useFixture}
+          className="fixture-btn"
+          title="Labeled offline fallback only — not the happy path"
+        >
+          Show fixture (offline)
+        </button>
         <button
           className="fixture-btn"
           disabled={busy || loading}
           onClick={() => onIngest({ source: "fixture" })}
-          title="Labeled fixture ingest — POST /jobs/ingest {source:fixture}"
+          title="Labeled fixture ingest — last resort"
         >
-          Ingest fixture
+          Ingest fixture (labeled)
         </button>
-        <button
-          disabled={busy || loading || !selected}
-          onClick={() => onIngest({ source: prefer, routeId: selected })}
-          title="Ingest the selected route from the current source"
-        >
-          Ingest selected
-        </button>
-        <button
-          disabled={loading}
-          onClick={useFixture}
-          title="List labeled fixture routes only"
-        >
-          Show fixture
-        </button>
-        <button
-          disabled={loading}
-          onClick={() => void load(prefer, mode)}
-          title="Refresh route list"
-        >
-          Refresh
-        </button>
-      </div>
-
-      {discoveredDevices.length > 0 && (
-        <div className="device-picks" aria-label="Discovered devices">
-          <span className="k">Devices</span>
-          <div className="device-pick-list">
-            {discoveredDevices.map((dev, i) => {
-              const id = String(dev.id ?? dev.name ?? i);
-              const kind = String(dev.kind ?? "device");
-              const online = dev.online !== false;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  className={`device-pick ${online ? "" : "off"}${pickedDevice === id ? " selected" : ""}`}
-                  disabled={busy || !online}
-                  aria-pressed={pickedDevice === id}
-                  title={`Select discovered ${kind} → /routes?device=`}
-                  onClick={() => pickDevice(id)}
-                >
-                  <span className="device-pick-name">
-                    {String(dev.name ?? dev.id ?? "device")}
-                  </span>
-                  <span className="device-pick-kind mono">{kind}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {lanNote && <div className="ingest-note">{lanNote}</div>}
-
-      {listError && (
-        <div className="ingest-error">
-          Routes unavailable ({listError}). Is the API on :8000?
-        </div>
-      )}
-
-      <div className="route-list" role="listbox" aria-label="mici routes">
-        {loading && (
-          <EmptyState
-            title={mode === "lan" ? "Scanning LAN…" : "Loading routes"}
-            body={
-              mode === "lan"
-                ? "Looking for mici over ADB and SSH. Pick a found device — no manual IP dig."
-                : mode === "connect"
-                  ? "Asking comma Connect for routes on this dongle."
-                  : "Asking the API for mici routes."
-            }
-          />
-        )}
-        {!loading && !listError && routes.length === 0 && mode === "lan" && (
-          <EmptyState
-            title={
-              listSource === "ssh" || sshConfigured || dongle?.ssh_available
-                ? "SSH · 0 routes"
-                : "Nothing on LAN yet"
-            }
-            body={
-              routesMessage ||
-              (listSource === "ssh" || sshConfigured || dongle?.ssh_available
-                ? "SSH ok · 0 routes under /data/media/0/realdata"
-                : "No ADB or SSH routes found. Fixture is a labeled fallback — pick it explicitly.")
-            }
-            hint={
-              emptyReason
-                ? `empty_reason=${emptyReason}`
-                : "GET /routes?source=ssh"
-            }
-            actions={
-              <>
-                <button
-                  type="button"
-                  disabled={loading}
-                  title="Record a drive on mici, then Refresh"
-                  onClick={() => void load("ssh", "lan", pickedDevice)}
-                >
-                  Record a drive / Refresh
-                </button>
-                <button
-                  type="button"
-                  disabled={loading}
-                  title="Re-check SSH host and /data/media/0/realdata"
-                  onClick={() => void testSsh()}
-                >
-                  Verify path
-                </button>
-                <button
-                  type="button"
-                  className="fixture-btn"
-                  disabled={loading}
-                  title="Labeled fixture — not live SSH"
-                  onClick={useFixture}
-                >
-                  Use fixture
-                </button>
-              </>
-            }
-          />
-        )}
-        {!loading && !listError && routes.length === 0 && mode === "connect" && (
-          <EmptyState
-            title={dongle?.connect_available ? "No Connect routes" : "Needs JWT"}
-            body={
-              dongle?.connect_available
-                ? "Connect is available but returned an empty list for this dongle."
-                : "comma Connect isn’t ready (JWT). Try Find on LAN or Show fixture."
-            }
-            hint="GET /routes?source=connect"
-          />
-        )}
-        {!loading && !listError && routes.length === 0 && mode !== "lan" && mode !== "connect" && (
-          <EmptyState
-            title="No routes yet"
-            body="Nothing listed for this source. Use Find on LAN, Use Connect, or Show fixture."
-            hint="GET /routes?source=fixture"
-          />
-        )}
-        {!loading &&
-          routes.map((r) => {
-            const active = selected === r.route_id;
-            const fixture =
-              r.source === "fixture" ||
-              Boolean(r.meta?.fixture) ||
-              r.meta?.label === "fixture" ||
-              listSource === "fixture";
-            return (
-              <button
-                key={r.route_id}
-                type="button"
-                role="option"
-                aria-selected={active}
-                className={`route-row ${active ? "selected" : ""} ${fixture ? "is-fixture" : ""}`}
-                onClick={() => setSelected(r.route_id)}
-                disabled={busy}
-              >
-                <div className="route-row-top">
-                  <span className="route-name">{r.display_name}</span>
-                  {fixture && (
-                    <span className="badge badge-fixture" title="Labeled fallback — not live">
-                      fixture
-                    </span>
-                  )}
-                </div>
-                <div className="route-row-meta mono">
-                  <span>{shortRouteId(r.route_id)}</span>
-                  <span>{r.segment_count ?? 0} segs</span>
-                  <span>{formatRouteLength(r.length_s)}</span>
-                </div>
-              </button>
-            );
-          })}
       </div>
 
       {(ingestActive || metrics.length > 0) && (

@@ -17,6 +17,8 @@ log = logging.getLogger(__name__)
 
 # Non-secret path under .cache/ (gitignored). JWT content must never be committed.
 _JWT_CACHE = _REPO_ROOT / ".cache" / "connect_jwt"
+# Dongle ID (non-secret). Gitignored via .cache/.
+_DONGLE_CACHE = _REPO_ROOT / ".cache" / "dongle_id"
 # SSH host/user/port/identity path (path only — not key bytes). Gitignored via .cache/.
 _SSH_CACHE = _REPO_ROOT / ".cache" / "ssh_config.json"
 
@@ -89,6 +91,96 @@ def clear_connect_jwt(*, clear_cache: bool = True) -> dict[str, Any]:
         except OSError as exc:
             log.warning("failed removing JWT cache: %s", exc)
     return connect_status()
+
+
+def ensure_dongle_from_cache() -> str | None:
+    """If DISTILLERY_DONGLE_ID unset, load from .cache/dongle_id into process env."""
+    if os.environ.get("DISTILLERY_DONGLE_ID"):
+        return os.environ.get("DISTILLERY_DONGLE_ID")
+    if not _DONGLE_CACHE.is_file():
+        return None
+    try:
+        dongle = _DONGLE_CACHE.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        log.warning("failed reading dongle cache: %s", exc)
+        return None
+    if not dongle:
+        return None
+    os.environ["DISTILLERY_DONGLE_ID"] = dongle
+    return dongle
+
+
+def set_dongle_id(dongle_id: str, *, persist: bool = True) -> dict[str, Any]:
+    """Store dongle id in process env (+ optional .cache file). Mirrors JWT Save."""
+    value = (dongle_id or "").strip()
+    if not value:
+        raise ValueError("dongle_id must be a non-empty string")
+    # Basic sanity — Connect dongle ids are hex-ish; allow alphanumeric
+    if len(value) < 8:
+        raise ValueError("dongle_id looks too short")
+    os.environ["DISTILLERY_DONGLE_ID"] = value
+    cached = False
+    if persist:
+        try:
+            _DONGLE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            _DONGLE_CACHE.write_text(value + "\n", encoding="utf-8")
+            try:
+                _DONGLE_CACHE.chmod(0o644)
+            except OSError:
+                pass
+            cached = True
+        except OSError as exc:
+            log.warning("failed writing dongle cache: %s", exc)
+    status = dongle_status()
+    status["persisted"] = cached
+    return status
+
+
+def clear_dongle_id(*, clear_cache: bool = True) -> dict[str, Any]:
+    os.environ.pop("DISTILLERY_DONGLE_ID", None)
+    if clear_cache and _DONGLE_CACHE.is_file():
+        try:
+            _DONGLE_CACHE.unlink()
+        except OSError as exc:
+            log.warning("failed removing dongle cache: %s", exc)
+    return dongle_status()
+
+
+def dongle_status(cfg: IngestConfig | None = None) -> dict[str, Any]:
+    """Status for GET/POST /dongle — current id + source (never invents demo dongle)."""
+    ensure_dongle_from_cache()
+    cfg = cfg or load_ingest_config()
+    cache_path = None
+    if _DONGLE_CACHE.is_file():
+        try:
+            cache_path = str(_DONGLE_CACHE.relative_to(_REPO_ROOT))
+        except ValueError:
+            cache_path = str(_DONGLE_CACHE)
+    source = None
+    if os.environ.get("DISTILLERY_DONGLE_ID"):
+        if _DONGLE_CACHE.is_file():
+            try:
+                cached = _DONGLE_CACHE.read_text(encoding="utf-8").strip()
+                if cached and cached == os.environ.get("DISTILLERY_DONGLE_ID"):
+                    source = "env+cache"
+                else:
+                    source = "env"
+            except OSError:
+                source = "env"
+        else:
+            source = "env"
+    elif cfg.dongle_id:
+        source = "yaml"
+    return {
+        "dongle_id": cfg.dongle_id or "",
+        "configured": bool(cfg.dongle_id),
+        "dongle_source": source,
+        "cache_path": cache_path,
+        "cams": list(cfg.cams),
+        "connect_available": cfg.connect_available,
+        "ssh_available": cfg.ssh_available,
+        "force_fixture": cfg.force_fixture,
+    }
 
 
 def connect_status(cfg: IngestConfig | None = None) -> dict[str, Any]:

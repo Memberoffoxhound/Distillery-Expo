@@ -14,13 +14,14 @@ import yaml
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_CONFIG = _REPO_ROOT / "configs" / "default.yaml"
 
-DEFAULT_DONGLE = "3e2de7ed673817c2"
+# Fixture-only sample dongle (labeled offline). Never the user-facing default.
+FIXTURE_DONGLE = "3e2de7ed673817c2"
 DEFAULT_CAMS = ("road", "wide", "driver")
 
 
 @dataclass(frozen=True)
 class IngestConfig:
-    dongle_id: str = DEFAULT_DONGLE
+    dongle_id: str = ""
     cams: tuple[str, ...] = DEFAULT_CAMS
     connect_jwt: str | None = None
     connect_base_url: str = "https://api.commadotai.com"
@@ -57,10 +58,21 @@ def load_ingest_config(config_path: Path | str | None = None) -> IngestConfig:
     cams_raw = mici.get("cams") or list(DEFAULT_CAMS)
     cams = tuple(str(c) for c in cams_raw)
 
-    dongle = (
-        os.environ.get("DISTILLERY_DONGLE_ID")
-        or str(raw.get("dongle_id") or DEFAULT_DONGLE)
-    ).strip()
+    # Live Connect/SSH require an explicit dongle (env, .cache/dongle_id, or YAML).
+    # Never imply the demo fixture dongle as the user's device.
+    dongle = (os.environ.get("DISTILLERY_DONGLE_ID") or "").strip()
+    if not dongle:
+        cache = _REPO_ROOT / ".cache" / "dongle_id"
+        if cache.is_file():
+            try:
+                dongle = cache.read_text(encoding="utf-8").strip()
+            except OSError:
+                dongle = ""
+    if not dongle:
+        yaml_dongle = str(raw.get("dongle_id") or "").strip()
+        # Ignore legacy demo default in YAML so Connect never queries the wrong device.
+        if yaml_dongle and yaml_dongle != FIXTURE_DONGLE:
+            dongle = yaml_dongle
 
     # Prefer env; else hydrate from .cache/connect_jwt (set via POST /discover/connect)
     jwt = os.environ.get("COMMA_JWT") or os.environ.get("CONNECT_JWT") or None

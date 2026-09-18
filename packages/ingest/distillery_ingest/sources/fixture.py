@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from distillery_ingest.config import IngestConfig
+from distillery_ingest.config import FIXTURE_DONGLE, IngestConfig
 from distillery_ingest.models import CamSample, RouteInfo, SegmentInfo
 from distillery_ingest.sources.base import RouteSource
 
@@ -26,10 +26,11 @@ def _fixture_path(cfg: IngestConfig) -> Path:
 def build_fixture_route(cfg: IngestConfig, route_id: str | None = None) -> RouteInfo:
     """Build a Connect-shaped route with road/wide/driver cam metadata."""
     rid = route_id or FIXTURE_ROUTE_ID
-    # Keep dongle prefix aligned with config when possible
+    # Fixture keeps the labeled sample dongle; live user dongle is separate.
+    dongle = (cfg.dongle_id or FIXTURE_DONGLE).strip() or FIXTURE_DONGLE
     if "|" not in rid:
-        rid = f"{cfg.dongle_id}|{rid}"
-    elif not rid.startswith(cfg.dongle_id):
+        rid = f"{dongle}|{rid}"
+    elif cfg.dongle_id and not rid.startswith(cfg.dongle_id):
         # Prefer configured dongle in display, keep given id for stability in tests
         pass
 
@@ -63,7 +64,7 @@ def build_fixture_route(cfg: IngestConfig, route_id: str | None = None) -> Route
 
     return RouteInfo(
         route_id=rid,
-        dongle_id=cfg.dongle_id,
+        dongle_id=dongle,
         display_name=f"fixture · {rid.split('|')[-1]}",
         source="fixture",
         start_time="2024-06-15T19:30:00+00:00",

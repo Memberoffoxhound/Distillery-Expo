@@ -1,5 +1,7 @@
 # Distillery Expo — default config (M1)
-dongle_id: "3e2de7ed673817c2"
+# dongle_id: set via Ingest GUI (Save Dongle) / DISTILLERY_DONGLE_ID / .cache/dongle_id
+# Do not hardcode the demo fixture dongle as the user device.
+dongle_id: ""
 
 hardware:
   mici:

@@ -4,9 +4,11 @@ from .config import IngestConfig, load_ingest_config
 from .discover import (
     connect_status,
     discovery_overview,
+    dongle_status,
     list_adb_devices,
     probe_ssh,
     set_connect_jwt,
+    set_dongle_id,
     set_ssh_config,
     ssh_status,
 )
@@ -26,6 +28,8 @@ __all__ = [
     "list_adb_devices",
     "connect_status",
     "set_connect_jwt",
+    "dongle_status",
+    "set_dongle_id",
     "ssh_status",
     "set_ssh_config",
     "probe_ssh",

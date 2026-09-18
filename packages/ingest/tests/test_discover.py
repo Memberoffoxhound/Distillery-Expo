@@ -18,6 +18,7 @@ from distillery_ingest.discover import (
     parse_adb_devices_output,
     probe_ssh,
     set_connect_jwt,
+    set_dongle_id,
     set_ssh_config,
     ssh_status,
 )
@@ -202,3 +203,13 @@ def test_discovery_overview_ssh_fields(monkeypatch):
     assert ssh["port"] == 2222
     assert "identity_path" in ssh
     assert "cache_path" in ssh
+
+
+def test_set_dongle_id_persist_and_status(tmp_path, monkeypatch):
+    cache = tmp_path / "dongle_id"
+    monkeypatch.setattr("distillery_ingest.discover._DONGLE_CACHE", cache)
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+    status = set_dongle_id("aabbccddeeff0011", persist=True)
+    assert status["dongle_id"] == "aabbccddeeff0011"
+    assert status["configured"] is True
+    assert cache.read_text(encoding="utf-8").strip() == "aabbccddeeff0011"

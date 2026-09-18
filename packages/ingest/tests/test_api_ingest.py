@@ -29,7 +29,8 @@ def test_dongle(client):
     r = client.get("/dongle")
     assert r.status_code == 200
     data = r.json()
-    assert data["dongle_id"] == "3e2de7ed673817c2"
+    # No hardcoded demo dongle as user default — empty until Save Dongle / env.
+    assert isinstance(data["dongle_id"], str)
     assert "cams" in data
     assert "connect_available" in data
     assert "ssh_available" in data
@@ -40,13 +41,32 @@ def test_dongle(client):
     assert data["adb_device_count"] >= 0
 
 
+def test_post_dongle_persist(client, monkeypatch, tmp_path):
+    cache = tmp_path / "dongle_id"
+    monkeypatch.setattr(
+        "distillery_ingest.discover._DONGLE_CACHE",
+        cache,
+    )
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+    r = client.post("/dongle", json={"dongle_id": "abcdef0123456789", "persist": True})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["dongle_id"] == "abcdef0123456789"
+    assert data.get("configured") is True
+    assert cache.is_file()
+    assert cache.read_text(encoding="utf-8").strip() == "abcdef0123456789"
+    g = client.get("/dongle")
+    assert g.json()["dongle_id"] == "abcdef0123456789"
+
+
 def test_list_routes_fixture(client):
     r = client.get("/routes", params={"source": "fixture"})
     assert r.status_code == 200
     data = r.json()
     assert data["source"] == "fixture"
-    assert data["dongle_id"] == "3e2de7ed673817c2"
+    # Fixture routes keep labeled sample dongle; user cfg may be empty.
     assert len(data["routes"]) >= 1
+    assert data["routes"][0]["dongle_id"] == "3e2de7ed673817c2"
     assert data["routes"][0]["meta"].get("fixture") is True or data["routes"][0]["meta"].get("label") == "fixture"
 
 

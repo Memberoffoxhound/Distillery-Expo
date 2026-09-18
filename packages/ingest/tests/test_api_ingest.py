@@ -68,3 +68,80 @@ def test_ingest_job_streams_samples(client):
     assert cams >= {"road", "wide", "driver"}
     # Flash gating untouched — no flash stage in ingest-only job
     assert not any(e.get("stage") == "flash" for e in events)
+
+
+def test_health_tinygrad_shape(client):
+    r = client.get("/health")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert data["status"] == "ok"
+    assert data["tinygrad"] in ("ok", "missing", "fixture")
+    assert data["mode"] in ("live", "fixture")
+    device = data["device"]
+    assert "found" in device and "ready" in device
+    assert "kind" in device and "name" in device and "backend" in device
+    # No tinygrad in this CI box → honest missing + fixture
+    if data["tinygrad"] == "missing":
+        assert data["mode"] == "fixture"
+        assert device["found"] is False
+
+
+def test_status_runtime(client):
+    r = client.get("/status/runtime")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert data["tinygrad"] in ("ok", "missing", "fixture")
+    assert "ml_backends" in data
+
+
+def test_discover_devices(client):
+    r = client.get("/discover/devices")
+    assert r.status_code == 200
+    data = r.json()
+    assert "devices" in data
+    assert "adb_available" in data
+    assert isinstance(data["devices"], list)
+
+
+def test_discover_connect_get_and_post(client, tmp_path, monkeypatch):
+    cache = tmp_path / "connect_jwt"
+    monkeypatch.setattr("distillery_ingest.discover._JWT_CACHE", cache)
+    monkeypatch.delenv("COMMA_JWT", raising=False)
+    monkeypatch.delenv("CONNECT_JWT", raising=False)
+
+    g = client.get("/discover/connect")
+    assert g.status_code == 200
+    assert "configured" in g.json()
+
+    p = client.post("/discover/connect", json={"jwt": "testjwtTOKEN1234", "persist": True})
+    assert p.status_code == 200
+    body = p.json()
+    assert body["configured"] is True
+    assert body["jwt_masked"]
+    assert "test" not in body.get("jwt_masked", "") or "…" in body["jwt_masked"]
+    assert cache.is_file()
+    # secret must not appear in response keys
+    assert "jwt" not in body or body.get("jwt") is None
+
+
+def test_discover_overview(client):
+    r = client.get("/discover")
+    assert r.status_code == 200
+    data = r.json()
+    for key in ("devices", "connect", "ssh", "fixture", "sources", "dongle_id"):
+        assert key in data
+    assert data["fixture"]["label"] == "fixture"
+
+
+def test_routes_accepts_device_query(client):
+    r = client.get(
+        "/routes",
+        params={"source": "fixture", "device": "192.168.1.9:5555", "limit": 5},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["source"] == "fixture"
+    assert data["device"] == "192.168.1.9:5555"
+    assert data["ssh_host"] == "192.168.1.9"

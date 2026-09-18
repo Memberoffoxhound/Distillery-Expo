@@ -47,3 +47,16 @@ distillery_ingest/
   sources/       # connect.py, ssh.py, fixture.py
 fixtures/sample_route.json
 ```
+
+
+## Discovery (Expo picker)
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /discover` | Combined: ADB devices + Connect + SSH + fixture |
+| `GET /discover/devices` | `adb devices -l` → id, model, transport, suggested_host |
+| `GET /discover/connect` | Connect JWT status (masked; no secrets) |
+| `POST /discover/connect` | `{ "jwt": "...", "persist": true }` → env + `.cache/connect_jwt` |
+| `GET /routes?source=&device=&ssh_host=` | List routes using discovered device/source |
+
+Fixture remains the offline fallback and is labeled `meta.label=fixture`.

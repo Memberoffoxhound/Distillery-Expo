@@ -52,8 +52,8 @@ export default function App() {
           <span className={`status-pill ${pillClass}`}>{statusLabel}</span>
           <StartTraining
             busy={busy}
-            onStart={({ source, includeFlash }) =>
-              job.startPipeline({ source, includeFlash })
+            onStart={({ source, forceFixture, allowToy }) =>
+              job.startTrainAll({ source, forceFixture, allowToy })
             }
           />
           <button

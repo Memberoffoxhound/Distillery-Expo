@@ -19,6 +19,8 @@ export interface RouteSummary {
 export interface RoutesResponse {
   dongle_id: string;
   source: string;
+  device?: string | null;
+  ssh_host?: string | null;
   routes: RouteSummary[];
 }
 
@@ -52,27 +54,37 @@ export interface DongleInfo {
   adb_status?: string | null;
 }
 
+/** Nested train device from GET /health and GET /status/runtime. */
+export interface DeviceInfo {
+  found?: boolean;
+  ready?: boolean;
+  kind?: string | null;
+  name?: string | null;
+  backend?: string | null;
+  error?: string | null;
+  detail?: string | null;
+  [key: string]: unknown;
+}
+
 /**
- * GET /health — today: status, service, ml_backends.
- * Tolerant of Craig’s future train-device / tinygrad fields.
+ * GET /health + /status/runtime — tinygrad + device {found,ready,kind,name,backend}.
  */
 export interface HealthResponse {
+  ok?: boolean;
   status?: string;
   service?: string;
-  /** Stage → "graig" | "fixture" (today). */
+  mode?: string | null;
   ml_backends?: Record<string, string>;
-  /** Future: tinygrad runtime — "ok" | "missing" | "fixture" | … */
   tinygrad?: string | null;
   tinygrad_status?: string | null;
-  /** Future: train device discovery (GPU/CPU/whatever tinygrad sees). */
-  device?: string | null;
+  /** Nested device object (live Craig shape) or legacy string. */
+  device?: DeviceInfo | string | null;
   device_status?: string | null;
   device_name?: string | null;
   train_device?: string | null;
   gpu?: string | null;
   gpu_status?: string | null;
   gpu_name?: string | null;
-  /** Future: driving-hours floor (≥50h). */
   driving_hours?: number | null;
   route_hours?: number | null;
   total_hours?: number | null;
@@ -85,6 +97,85 @@ export interface HealthResponse {
     [key: string]: unknown;
   };
   [key: string]: unknown;
+}
+
+export interface DiscoverDevice {
+  id?: string;
+  model?: string | null;
+  state?: string;
+  transport?: string;
+  suggested_host?: string | null;
+  name?: string;
+  kind?: string;
+  online?: boolean;
+  [key: string]: unknown;
+}
+
+export interface DiscoverOverview {
+  dongle_id?: string;
+  cams?: string[];
+  devices?: {
+    ok?: boolean;
+    adb_available?: boolean;
+    error?: string | null;
+    devices?: DiscoverDevice[];
+  };
+  connect?: {
+    configured?: boolean;
+    available?: boolean;
+    jwt_masked?: string | null;
+    jwt_source?: string | null;
+    dongle_id?: string;
+    [key: string]: unknown;
+  };
+  ssh?: {
+    configured?: boolean;
+    available?: boolean;
+    host?: string | null;
+    user?: string | null;
+    [key: string]: unknown;
+  };
+  fixture?: {
+    available?: boolean;
+    label?: string;
+    offline_fallback?: boolean;
+    forced?: boolean;
+  };
+  sources?: Record<string, boolean>;
+  [key: string]: unknown;
+}
+
+export interface ReadyGap {
+  code: string;
+  message: string;
+}
+
+export interface ReadyResponse {
+  ok: boolean;
+  ready?: boolean;
+  gaps: ReadyGap[];
+  hours?: Record<string, unknown> | null;
+  hours_gate?: Record<string, unknown> | null;
+  device?: Record<string, unknown> | null;
+  teacher?: Record<string, unknown> | null;
+  min_train_hours?: number;
+  allow_toy?: boolean;
+  force_fixture?: boolean;
+  probe?: Record<string, unknown> | null;
+  live?: boolean;
+  licensed?: boolean;
+  [key: string]: unknown;
+}
+
+export class TrainAllNotReadyError extends Error {
+  gaps: ReadyGap[];
+  status: number;
+  constructor(gaps: ReadyGap[], status = 409) {
+    super("train_all not ready");
+    this.name = "TrainAllNotReadyError";
+    this.gaps = gaps;
+    this.status = status;
+  }
 }
 
 
@@ -138,7 +229,21 @@ export function wsUrl(jobId: string): string {
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, init);
-  if (!res.ok) throw new Error(`API ${res.status}`);
+  if (!res.ok) {
+    let detail: unknown = null;
+    try {
+      detail = await res.json();
+    } catch {
+      /* */
+    }
+    const err = new Error(`API ${res.status}`) as Error & {
+      status?: number;
+      detail?: unknown;
+    };
+    err.status = res.status;
+    err.detail = detail;
+    throw err;
+  }
   return res.json() as Promise<T>;
 }
 
@@ -146,50 +251,96 @@ export function fetchDongle(): Promise<DongleInfo> {
   return jsonFetch("/dongle");
 }
 
-
 export function fetchHealth(): Promise<HealthResponse> {
   return jsonFetch("/health");
 }
 
+export function fetchRuntimeStatus(): Promise<HealthResponse> {
+  return jsonFetch("/status/runtime");
+}
+
+/** Prefer /status/runtime; fall back to /health. */
+export async function fetchStatusChipsSource(): Promise<HealthResponse> {
+  try {
+    return await fetchRuntimeStatus();
+  } catch {
+    return fetchHealth();
+  }
+}
+
+export function fetchDiscover(): Promise<DiscoverOverview> {
+  return jsonFetch("/discover");
+}
+
+export function fetchDiscoverDevices(): Promise<{
+  ok?: boolean;
+  adb_available?: boolean;
+  error?: string | null;
+  devices: DiscoverDevice[];
+}> {
+  return jsonFetch("/discover/devices");
+}
+
+export function fetchDiscoverConnect(): Promise<DiscoverOverview["connect"]> {
+  return jsonFetch("/discover/connect");
+}
+
+export function postDiscoverConnect(jwt: string, persist = true): Promise<DiscoverOverview["connect"]> {
+  return jsonFetch("/discover/connect", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jwt, persist }),
+  });
+}
+
+export function fetchReady(opts?: {
+  teacher?: string | null;
+  allow_toy?: boolean;
+  force_fixture?: boolean;
+}): Promise<ReadyResponse> {
+  const q = new URLSearchParams();
+  if (opts?.teacher) q.set("teacher", opts.teacher);
+  if (opts?.allow_toy) q.set("allow_toy", "true");
+  if (opts?.force_fixture) q.set("force_fixture", "true");
+  const qs = q.toString();
+  return jsonFetch(`/ready${qs ? `?${qs}` : ""}`);
+}
+
 /**
- * Prefer GET /teachers when Craig lands it; fall back to /health teacher* fields.
+ * GET /teachers — comma master · model; fixture labeled offline.
  * Never invent a live comma-master claim from silence.
  */
 export async function fetchTeachers(): Promise<TeacherInfo> {
-  try {
-    return await jsonFetch<TeacherInfo>("/teachers");
-  } catch {
-    const health = await fetchHealth();
-    const extra = health as HealthResponse & {
-      teacher?: TeacherInfo;
-      teachers?: TeacherModel[];
-    };
-    const t = extra.teacher ?? null;
-    const list = extra.teachers ?? t?.teachers ?? [];
-    const backends = health.ml_backends ?? {};
-    const teachBackend = typeof backends.teach === "string" ? backends.teach : null;
-    const fixture =
-      teachBackend === "fixture" ||
-      t?.fixture === true ||
-      t?.status === "fixture" ||
-      list.some((m) => m.fixture || m.source === "fixture");
-    const live =
-      !fixture &&
-      (t?.live === true ||
-        teachBackend === "graig" ||
-        t?.status === "live" ||
-        list.some((m) => m.live));
-    return {
-      selected: t?.selected ?? list[0] ?? null,
-      teachers: list,
-      status: t?.status ?? (fixture ? "fixture" : live ? "live" : "unknown"),
-      source: t?.source ?? (fixture ? "fixture" : live ? "comma_master" : null),
-      model_name: t?.model_name ?? t?.selected?.name ?? null,
-      model_version: t?.model_version ?? t?.selected?.version ?? null,
-      live,
-      fixture,
-    };
-  }
+  const raw = await jsonFetch<{
+    teachers?: TeacherModel[];
+    selected?: TeacherModel | null;
+    source?: string | null;
+    count?: number;
+  }>("/teachers");
+  const list = raw.teachers ?? [];
+  const selected = raw.selected ?? list[0] ?? null;
+  const src = String(raw.source ?? selected?.source ?? "");
+  const fixture =
+    src === "fixture" ||
+    selected?.source === "fixture" ||
+    selected?.live === false ||
+    list.some((m) => m.source === "fixture" || m.live === false);
+  const live =
+    !fixture &&
+    (selected?.live === true ||
+      src.includes("openpilot") ||
+      src === "comma_master" ||
+      list.some((m) => m.live === true));
+  return {
+    selected,
+    teachers: list,
+    status: fixture ? "fixture" : live ? "live" : "unknown",
+    source: fixture ? "fixture" : live ? "comma_master" : raw.source ?? null,
+    model_name: selected?.name ?? null,
+    model_version: selected?.version ?? null,
+    live,
+    fixture,
+  };
 }
 
 /** Calm display: "comma master · <model>" or explicit fixture. Never Chestnut. */
@@ -251,9 +402,12 @@ export function formatTeacherLabel(info: TeacherInfo | null): {
 
 export function fetchRoutes(
   source: RouteSource = "auto",
-  limit = 20
+  limit = 20,
+  opts?: { device?: string | null; ssh_host?: string | null }
 ): Promise<RoutesResponse> {
   const q = new URLSearchParams({ source, limit: String(limit) });
+  if (opts?.device) q.set("device", opts.device);
+  if (opts?.ssh_host) q.set("ssh_host", opts.ssh_host);
   return jsonFetch(`/routes?${q}`);
 }
 
@@ -346,6 +500,47 @@ export function startPipelineJob(body: {
   });
 }
 
+/**
+ * One-click train_all — never auto-flashes.
+ * 409 → TrainAllNotReadyError with structured gaps from Craig.
+ */
+export async function startTrainAllJob(body: {
+  source?: RouteSource;
+  route_id?: string | null;
+  teacher?: string | null;
+  allow_toy?: boolean;
+  force_fixture?: boolean;
+} = {}): Promise<JobSummary> {
+  const res = await fetch(`${API_BASE}/jobs/train_all`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: body.source ?? "auto",
+      route_id: body.route_id ?? null,
+      teacher: body.teacher ?? null,
+      allow_toy: body.allow_toy ?? false,
+      force_fixture: body.force_fixture ?? false,
+    }),
+  });
+  if (res.status === 409) {
+    const detail = (await res.json().catch(() => ({}))) as {
+      detail?: { gaps?: ReadyGap[]; message?: string } | ReadyGap[];
+      gaps?: ReadyGap[];
+    };
+    const nested = detail.detail;
+    const gaps = Array.isArray(nested)
+      ? nested
+      : nested && typeof nested === "object" && Array.isArray(nested.gaps)
+        ? nested.gaps
+        : Array.isArray(detail.gaps)
+          ? detail.gaps
+          : [];
+    throw new TrainAllNotReadyError(gaps, 409);
+  }
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return res.json() as Promise<JobSummary>;
+}
+
 export function confirmFlashJob(jobId: string): Promise<{ ok: boolean }> {
   return jsonFetch(`/jobs/${jobId}/flash/confirm`, {
     method: "POST",
@@ -404,7 +599,8 @@ export function healthToStatusChips(health: HealthResponse | null, checking: boo
     teachBackend === "fixture" ||
     trainBackend === "fixture" ||
     asStr(health?.tinygrad) === "fixture" ||
-    asStr(health?.tinygrad_status) === "fixture";
+    asStr(health?.tinygrad_status) === "fixture" ||
+    asStr(health?.mode) === "fixture";
 
   // --- tinygrad ---
   let tgValue = "unknown";
@@ -441,62 +637,58 @@ export function healthToStatusChips(health: HealthResponse | null, checking: boo
     tgTone = "off";
   }
 
-  // --- Train device (GPU if present, else CPU / whatever tinygrad sees) ---
-  // Prefer explicit Craig fields; never claim 7090-only.
+  // --- Train device: prefer nested device {found,ready,kind,name,backend} ---
+  const nested =
+    health?.device && typeof health.device === "object"
+      ? (health.device as DeviceInfo)
+      : null;
   const deviceName =
+    asStr(nested?.name) ??
     asStr(health?.device_name) ??
     asStr(health?.train_device) ??
-    asStr(health?.device) ??
+    (typeof health?.device === "string" ? asStr(health.device) : null) ??
     asStr(health?.gpu_name) ??
     asStr(health?.gpu) ??
     null;
-  const deviceStatus =
-    asStr(health?.device_status) ??
-    asStr(health?.gpu_status) ??
-    null;
+  const deviceKind = asStr(nested?.kind);
+  const deviceReady = nested?.ready === true;
+  const deviceFound = nested?.found === true;
+  const modeFixture = asStr(health?.mode) === "fixture";
 
   let devValue = "unknown";
   let devTone: ChipTone = "off";
   let devTitle = "Train device — tinygrad-compatible (GPU or CPU). Not 7090-locked.";
 
-  if (anyFixture && !deviceStatus && !deviceName) {
-    // Fixture path: never imply a live GPU/device is teaching
+  if (modeFixture || (anyFixture && !deviceFound && !deviceName)) {
     devValue = "fixture";
     devTone = "fixture";
-    devTitle = "Fixture backends active — not a live train-device claim.";
-  } else if (deviceStatus || deviceName) {
-    const statusLow = (deviceStatus ?? "").toLowerCase();
-    const name = deviceName;
-    if (statusLow === "ready" || statusLow === "found" || statusLow === "ok" || statusLow === "present") {
-      devValue = name ? `${name} · ready` : "ready";
+    devTitle = "Fixture / offline mode — not a live train-device claim.";
+  } else if (nested) {
+    const kindBit = deviceKind ? `${deviceKind}` : null;
+    const nameBit = deviceName;
+    if (deviceReady) {
+      const label = [nameBit, kindBit].filter(Boolean).join(" · ");
+      devValue = label ? `${label} · ready` : "ready";
       devTone = "ok";
-    } else if (statusLow === "missing" || statusLow === "absent" || statusLow === "none") {
+    } else if (deviceFound) {
+      devValue = nameBit ? `${nameBit} · not ready` : "found · not ready";
+      devTone = "warn";
+    } else {
       devValue = "missing";
       devTone = "warn";
-    } else if (statusLow === "unknown" || statusLow === "checking") {
-      devValue = statusLow === "checking" ? "checking…" : "unknown";
-      devTone = statusLow === "checking" ? "checking" : "off";
-    } else if (name) {
-      // Name only — show it calmly as found, status unknown
-      devValue = name;
-      devTone = "ok";
-      devTitle = `Device reported: ${name}. Status fields pending from /health.`;
-    } else if (deviceStatus) {
-      devValue = deviceStatus;
-      devTone = "off";
     }
-  } else if (teachBackend === "graig" || trainBackend === "graig") {
-    // Packages live but no device field yet
-    devValue = "unknown";
-    devTone = "off";
-    devTitle = "ML backends live; device discovery fields not on /health yet.";
+    if (asStr(nested.backend)) {
+      devTitle = `backend=${nested.backend}; kind=${deviceKind ?? "?"}`;
+    }
+  } else if (deviceName) {
+    devValue = deviceName;
+    devTone = "ok";
   } else if (!health) {
     devValue = "unknown";
     devTone = "off";
   } else {
     devValue = "unknown";
     devTone = "off";
-    devTitle = "No device_* fields on /health yet — Craig to add.";
   }
 
   return [

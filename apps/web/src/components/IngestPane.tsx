@@ -2,8 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DistilleryEvent, StageName } from "../types/events";
 import {
   fetchDongle,
+  fetchDiscover,
+  fetchDiscoverDevices,
   fetchRoutes,
   formatRouteLength,
+  postDiscoverConnect,
+  type DiscoverDevice,
+  type DiscoverOverview,
   type DongleInfo,
   type RouteSource,
   type RouteSummary,
@@ -174,16 +179,49 @@ export function IngestPane({
   const [mode, setMode] = useState<DiscoverMode>("fixture");
   const [lanNote, setLanNote] = useState<string | null>(null);
 
-  const load = useCallback(async (source: RouteSource, nextMode?: DiscoverMode) => {
+  const [pickedDevice, setPickedDevice] = useState<string | null>(null);
+  const [discover, setDiscover] = useState<DiscoverOverview | null>(null);
+  const [jwtDraft, setJwtDraft] = useState("");
+
+  const load = useCallback(async (source: RouteSource, nextMode?: DiscoverMode, deviceId?: string | null) => {
     setLoading(true);
     setListError(null);
     if (nextMode) setMode(nextMode);
     try {
-      const [d, r] = await Promise.all([
+      const [d, overview, adb, r] = await Promise.all([
         fetchDongle(),
-        fetchRoutes(source, 20),
+        fetchDiscover().catch(() => null),
+        fetchDiscoverDevices().catch(() => ({ devices: [] as DiscoverDevice[], adb_available: false })),
+        fetchRoutes(source, 20, {
+          device: deviceId ?? pickedDevice,
+          ssh_host: null,
+        }),
       ]);
-      setDongle(d);
+      setDiscover(overview);
+      const adbDevices = (adb.devices ?? overview?.devices?.devices ?? []) as DiscoverDevice[];
+      const connect = overview?.connect;
+      const ssh = overview?.ssh;
+      const enriched: DongleInfo = {
+        ...d,
+        connect_available: Boolean(connect?.available ?? connect?.configured ?? d.connect_available),
+        ssh_available: Boolean(ssh?.available ?? ssh?.configured ?? d.ssh_available),
+        force_fixture: Boolean(overview?.fixture?.forced ?? d.force_fixture),
+        connect_status: connect?.configured
+          ? "connected"
+          : connect?.available
+            ? "needs_jwt"
+            : "offline",
+        adb_available: Boolean(adb.adb_available ?? overview?.devices?.adb_available),
+        adb_status: (adb.devices ?? []).length > 0 ? "found" : "missing",
+        devices: adbDevices.map((x) => ({
+          id: x.id,
+          name: x.model ?? x.name ?? x.id,
+          kind: x.transport === "tcp" || x.transport === "usb" ? "adb" : (x.kind ?? "adb"),
+          online: String(x.state ?? "").toLowerCase() === "device",
+          ...x,
+        })),
+      };
+      setDongle(enriched);
       setRoutes(r.routes);
       setListSource(r.source);
       setPrefer(source);
@@ -192,25 +230,23 @@ export function IngestPane({
         return r.routes[0]?.route_id ?? null;
       });
 
-      // Honest empty-state notes for LAN/ADB until Craig lands richer fields
       if (nextMode === "lan" || source === "ssh" || source === "auto") {
-        const adbKnown = d.adb_available === true || Boolean(d.adb_status);
-        const devices = d.devices ?? [];
-        const adbDevices = devices.filter(
-          (x) =>
-            String(x.kind ?? "").toLowerCase() === "adb" ||
-            String(x.name ?? "").toLowerCase().includes("adb")
-        );
         if (adbDevices.length > 0) {
           setLanNote(
-            `${adbDevices.length} ADB device${adbDevices.length === 1 ? "" : "s"} reported — pick a route below.`
+            `${adbDevices.length} ADB device${adbDevices.length === 1 ? "" : "s"} via GET /discover/devices — pick one, then a route.`
           );
-        } else if (!adbKnown && !d.ssh_available && r.routes.length === 0) {
+        } else if (!enriched.ssh_available && r.routes.length === 0) {
           setLanNote(
-            "ADB/LAN scan not on the API yet. Find on LAN calls SSH routes today; Craig will add devices[] / adb_available / lan_scan."
+            "No ADB devices and SSH not configured. Use Connect JWT or fixture."
           );
-        } else if (adbKnown && r.routes.length === 0) {
-          setLanNote("ADB path present, but no routes returned. Try Connect or fixture.");
+        } else if (r.routes.length === 0) {
+          setLanNote("Discovery ok, but no routes returned. Try Connect or fixture.");
+        } else {
+          setLanNote(null);
+        }
+      } else if (nextMode === "connect") {
+        if (!connect?.configured) {
+          setLanNote("Connect needs a JWT — paste below or POST /discover/connect.");
         } else {
           setLanNote(null);
         }
@@ -224,15 +260,14 @@ export function IngestPane({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [pickedDevice]);
 
   useEffect(() => {
     void load("fixture", "fixture");
   }, [load]);
 
   const findOnLan = () => {
-    // Prefer SSH listing today; auto as soft fallback. ADB lands via Craig fields.
-    void load("ssh", "lan");
+    void load("ssh", "lan", pickedDevice);
   };
 
   const useConnect = () => {
@@ -241,6 +276,26 @@ export function IngestPane({
 
   const useFixture = () => {
     void load("fixture", "fixture");
+  };
+
+  const saveJwt = async () => {
+    const token = jwtDraft.trim();
+    if (!token) return;
+    setLoading(true);
+    try {
+      await postDiscoverConnect(token, true);
+      setJwtDraft("");
+      await load("connect", "connect");
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : "Connect JWT failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const pickDevice = (id: string) => {
+    setPickedDevice(id);
+    void load(prefer === "fixture" ? "ssh" : prefer, "lan", id);
   };
 
   const conn = useMemo(
@@ -255,6 +310,7 @@ export function IngestPane({
   );
 
   const discoveredDevices = dongle?.devices ?? [];
+  const connectConfigured = Boolean(discover?.connect?.configured);
 
   return (
     <div className="ingest-pane">
@@ -319,7 +375,7 @@ export function IngestPane({
           className="primary"
           disabled={loading}
           onClick={findOnLan}
-          title="Find mici on LAN via ADB + SSH — GET /routes?source=ssh (+ future lan_scan)"
+          title="GET /discover + /discover/devices, then /routes?source=ssh&device=…"
         >
           Find mici on LAN
         </button>
@@ -327,11 +383,31 @@ export function IngestPane({
           className="primary"
           disabled={loading}
           onClick={useConnect}
-          title="Use comma Connect — GET /routes?source=connect"
+          title="GET /discover/connect + /routes?source=connect"
         >
           Use Connect
         </button>
       </div>
+
+      {(mode === "connect" || (!connectConfigured && mode !== "fixture")) && (
+        <div className="ingest-jwt-row">
+          <input
+            type="password"
+            placeholder="comma Connect JWT"
+            value={jwtDraft}
+            onChange={(e) => setJwtDraft(e.target.value)}
+            disabled={loading}
+            aria-label="Connect JWT"
+          />
+          <button
+            disabled={loading || !jwtDraft.trim()}
+            onClick={() => void saveJwt()}
+            title="POST /discover/connect"
+          >
+            Save JWT
+          </button>
+        </div>
+      )}
 
       <div className="ingest-actions secondary-row">
         <button
@@ -377,19 +453,11 @@ export function IngestPane({
                 <button
                   key={id}
                   type="button"
-                  className={`device-pick ${online ? "" : "off"}`}
+                  className={`device-pick ${online ? "" : "off"}${pickedDevice === id ? " selected" : ""}`}
                   disabled={busy || !online}
-                  title={`Select discovered ${kind}`}
-                  onClick={() => {
-                    // Prefer routing via the device’s kind when Craig wires it
-                    const src: RouteSource =
-                      kind.toLowerCase() === "connect"
-                        ? "connect"
-                        : kind.toLowerCase() === "adb" || kind.toLowerCase() === "ssh"
-                          ? "ssh"
-                          : "auto";
-                    void load(src, kind.toLowerCase() === "connect" ? "connect" : "lan");
-                  }}
+                  aria-pressed={pickedDevice === id}
+                  title={`Select discovered ${kind} → /routes?device=`}
+                  onClick={() => pickDevice(id)}
                 >
                   <span className="device-pick-name">
                     {String(dev.name ?? dev.id ?? "device")}
@@ -427,7 +495,7 @@ export function IngestPane({
           <EmptyState
             title="Nothing on LAN yet"
             body="No ADB or SSH routes found. Fixture stays the labeled fallback until a device appears."
-            hint="GET /routes?source=ssh · future: lan_scan + adb_available"
+            hint="GET /discover/devices + /routes?source=ssh&device=…"
           />
         )}
         {!loading && !listError && routes.length === 0 && mode === "connect" && (

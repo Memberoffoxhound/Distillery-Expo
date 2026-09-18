@@ -1107,3 +1107,26 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .readiness-footnote { margin: 0; font-size: 0.62rem; line-height: 1.35; }
 .readiness-ok { font-size: 0.72rem; color: var(--accent); }
+
+.ingest-jwt-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.5rem 0 0.75rem;
+  flex-wrap: wrap;
+}
+.ingest-jwt-row input {
+  flex: 1 1 14rem;
+  min-width: 10rem;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border, #333);
+  background: var(--panel, #12141a);
+  color: inherit;
+}
+.device-pick.selected,
+.device-pick[aria-pressed="true"] {
+  outline: 1px solid var(--accent, #6cf);
+}

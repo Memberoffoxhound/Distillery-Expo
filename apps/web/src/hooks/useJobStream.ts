@@ -6,6 +6,8 @@ import {
   startIngestJob,
   startShardJob,
   startPipelineJob,
+  startTrainAllJob,
+  TrainAllNotReadyError,
   wsUrl,
   type RouteSource,
 } from "../lib/api";
@@ -25,7 +27,7 @@ export interface StageTiming {
 
 export interface JobState {
   jobId: string | null;
-  jobKind: "demo" | "ingest" | "shard" | "pipeline" | "teach" | "train" | "export" | "eval" | null;
+  jobKind: "demo" | "ingest" | "shard" | "pipeline" | "train_all" | "teach" | "train" | "export" | "eval" | null;
   status: string;
   events: DistilleryEvent[];
   stageStatus: Record<StageName, StageStatus>;
@@ -184,7 +186,7 @@ export function useJobStream() {
 
   const beginJob = useCallback(
     async (
-      kind: "demo" | "ingest" | "shard" | "pipeline" | "teach" | "train" | "export" | "eval",
+      kind: "demo" | "ingest" | "shard" | "pipeline" | "train_all" | "teach" | "train" | "export" | "eval",
       starter: () => Promise<{ id: string; status?: string }>
     ) => {
       seen.current = new Set();
@@ -205,9 +207,17 @@ export function useJobStream() {
         }));
         connectWs(data.id);
       } catch (e) {
+        let msg = "Failed to start job";
+        if (e instanceof TrainAllNotReadyError) {
+          msg = e.gaps.length
+            ? e.gaps.map((g) => `${g.code}: ${g.message}`).join(" · ")
+            : "train_all not ready (409)";
+        } else if (e instanceof Error) {
+          msg = e.message;
+        }
         setState((p) => ({
           ...p,
-          error: e instanceof Error ? e.message : "Failed to start job",
+          error: msg,
           status: "idle",
           jobKind: null,
         }));
@@ -261,6 +271,27 @@ export function useJobStream() {
     [beginJob]
   );
 
+  const startTrainAll = useCallback(
+    async (opts?: {
+      source?: RouteSource;
+      routeId?: string | null;
+      forceFixture?: boolean;
+      allowToy?: boolean;
+      teacher?: string | null;
+    }) => {
+      await beginJob("train_all", () =>
+        startTrainAllJob({
+          source: opts?.source ?? "auto",
+          route_id: opts?.routeId ?? null,
+          force_fixture: opts?.forceFixture ?? false,
+          allow_toy: opts?.allowToy ?? false,
+          teacher: opts?.teacher ?? null,
+        })
+      );
+    },
+    [beginJob]
+  );
+
   const confirmFlash = useCallback(async () => {
     const jobId = jobIdRef.current ?? state.jobId;
     if (!jobId) return;
@@ -282,6 +313,7 @@ export function useJobStream() {
     startIngest,
     startShard,
     startPipeline,
+    startTrainAll,
     confirmFlash,
     apiBase: apiBase(),
   };

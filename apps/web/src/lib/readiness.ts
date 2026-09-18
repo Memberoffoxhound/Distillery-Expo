@@ -1,17 +1,14 @@
 /**
- * Preflight for Start training — calm UI prompts, not CLI archaeology.
- * Tolerant of missing Craig fields; never invents live readiness.
+ * Preflight for Start training — binds to live GET /ready gaps.
+ * Calm UI prompts from Craig structured gaps; no client-side stub readiness.
  */
 
 import {
-  fetchDongle,
-  fetchHealth,
-  fetchRoutes,
+  fetchReady,
   fetchTeachers,
   formatTeacherLabel,
-  healthToStatusChips,
-  type DongleInfo,
-  type HealthResponse,
+  type ReadyGap,
+  type ReadyResponse,
   type RouteSource,
   type TeacherInfo,
 } from "./api";
@@ -21,7 +18,8 @@ export type ReadinessId =
   | "mici_lan"
   | "hours"
   | "device"
-  | "teacher";
+  | "teacher"
+  | "other";
 
 export type CheckStatus = "ok" | "missing" | "unknown" | "fixture" | "shortfall";
 
@@ -30,292 +28,219 @@ export interface ReadinessCheck {
   label: string;
   status: CheckStatus;
   detail: string;
-  /** Short ask shown when not ok */
   ask?: string;
+  code?: string;
 }
 
 export interface ReadinessReport {
   checks: ReadinessCheck[];
   readyLive: boolean;
-  /** Fixture path available as labeled fallback */
   fixtureOk: boolean;
   suggestedSource: RouteSource;
-  dongle: DongleInfo | null;
-  health: HealthResponse | null;
+  ready: ReadyResponse | null;
   teacher: TeacherInfo | null;
+  gaps: ReadyGap[];
   hours: number | null;
   hoursKnown: boolean;
   minHours: number;
 }
 
-const MIN_HOURS = 50;
+const GAP_META: Record<
+  string,
+  { id: ReadinessId; label: string; ask: string }
+> = {
+  insufficient_hours: {
+    id: "hours",
+    label: "Driving data",
+    ask: "Need ≥50h driving data (or DISTILLERY_ALLOW_TOY_TRAIN=1 for CI — still not licensed).",
+  },
+  device_not_ready: {
+    id: "device",
+    label: "Train device",
+    ask: "Install / expose tinygrad on a GPU or CPU device, then retry.",
+  },
+  teacher_not_selected: {
+    id: "teacher",
+    label: "Teacher",
+    ask: "Select comma-master teacher (GET /teachers). No Chestnut.",
+  },
+  mici_not_found: {
+    id: "mici_lan",
+    label: "mici on LAN",
+    ask: "Tap Find mici on LAN — pick a found ADB/SSH device.",
+  },
+  connect_not_configured: {
+    id: "connect",
+    label: "Connect",
+    ask: "Connect your comma account (JWT via Use Connect) — or use Find mici on LAN / fixture.",
+  },
+  discover_error: {
+    id: "mici_lan",
+    label: "Discover",
+    ask: "Discovery failed — is the API running?",
+  },
+};
 
-function hoursFromHealth(health: HealthResponse | null): {
-  hours: number | null;
-  known: boolean;
-} {
-  if (!health) return { hours: null, known: false };
-  const raw =
-    health.driving_hours ??
-    health.route_hours ??
-    health.total_hours ??
-    health.hours ??
-    (health as { hours_info?: { hours?: unknown; known?: unknown } }).hours_info
-      ?.hours;
-  const knownFlag = (health as { hours_known?: unknown }).hours_known;
-  const info = (health as { hours_info?: { hours?: unknown; known?: unknown } })
-    .hours_info;
-  if (typeof raw === "number" && Number.isFinite(raw)) {
-    return { hours: raw, known: knownFlag !== false && info?.known !== false };
-  }
-  if (info && typeof info.hours === "number") {
-    return { hours: info.hours, known: info.known !== false };
-  }
-  return { hours: null, known: false };
+function gapToCheck(gap: ReadyGap): ReadinessCheck {
+  const meta = GAP_META[gap.code] ?? {
+    id: "other" as ReadinessId,
+    label: gap.code,
+    ask: gap.message,
+  };
+  const status: CheckStatus =
+    gap.code === "insufficient_hours" ? "shortfall" : "missing";
+  return {
+    id: meta.id,
+    label: meta.label,
+    status,
+    detail: gap.message,
+    ask: meta.ask,
+    code: gap.code,
+  };
 }
 
-export async function checkReadiness(): Promise<ReadinessReport> {
-  let dongle: DongleInfo | null = null;
-  let health: HealthResponse | null = null;
-  let teacher: TeacherInfo | null = null;
-  let lanRoutes = 0;
-  let connectRoutes = 0;
+function okCheck(
+  id: ReadinessId,
+  label: string,
+  detail: string
+): ReadinessCheck {
+  return { id, label, status: "ok", detail };
+}
 
-  const results = await Promise.allSettled([
-    fetchDongle(),
-    fetchHealth(),
+/**
+ * Live readiness from GET /ready (+ teacher label from GET /teachers).
+ */
+export async function checkReadiness(opts?: {
+  force_fixture?: boolean;
+  allow_toy?: boolean;
+}): Promise<ReadinessReport> {
+  const force_fixture = opts?.force_fixture ?? false;
+  const allow_toy = opts?.allow_toy ?? false;
+
+  const [readySettled, teacherSettled] = await Promise.allSettled([
+    fetchReady({ force_fixture, allow_toy }),
     fetchTeachers(),
-    fetchRoutes("ssh", 5),
-    fetchRoutes("connect", 5),
   ]);
 
-  if (results[0].status === "fulfilled") dongle = results[0].value;
-  if (results[1].status === "fulfilled") health = results[1].value;
-  if (results[2].status === "fulfilled") teacher = results[2].value;
-  if (results[3].status === "fulfilled") lanRoutes = results[3].value.routes.length;
-  if (results[4].status === "fulfilled")
-    connectRoutes = results[4].value.routes.length;
-
-  const { hours, known: hoursKnown } = hoursFromHealth(health);
-  const minHours = MIN_HOURS;
-
-  // --- Connect ---
-  const connectStatus = (dongle?.connect_status ?? "").toLowerCase();
-  const needsJwt =
-    connectStatus === "needs_jwt" ||
-    connectStatus === "needs-jwt" ||
-    (dongle != null && !dongle.connect_available);
-  let connectCheck: ReadinessCheck;
-  if (!dongle) {
-    connectCheck = {
-      id: "connect",
-      label: "Connect",
-      status: "unknown",
-      detail: "Could not reach /dongle.",
-      ask: "Is the API running? We’ll retry when you Start training again.",
-    };
-  } else if (needsJwt) {
-    connectCheck = {
-      id: "connect",
-      label: "Connect",
-      status: "missing",
-      detail: "comma Connect needs a JWT.",
-      ask: "Connect your comma account (JWT) — or use Find mici on LAN / ADB instead.",
-    };
-  } else if (dongle.connect_available || connectRoutes > 0) {
-    connectCheck = {
-      id: "connect",
-      label: "Connect",
-      status: "ok",
-      detail:
-        connectRoutes > 0
-          ? `Connected · ${connectRoutes} route(s) listed`
-          : "Connect available",
-    };
-  } else {
-    connectCheck = {
-      id: "connect",
-      label: "Connect",
-      status: "unknown",
-      detail: "Connect status unclear.",
-      ask: "Try Use Connect in Ingest, or Find mici on LAN.",
-    };
+  if (readySettled.status === "rejected") {
+    throw readySettled.reason instanceof Error
+      ? readySettled.reason
+      : new Error("GET /ready failed");
   }
 
-  // --- mici LAN (ADB + SSH) ---
-  const adbOk =
-    dongle?.adb_available === true ||
-    ["found", "ready", "ok"].includes((dongle?.adb_status ?? "").toLowerCase());
-  const devices = dongle?.devices ?? [];
-  const lanDeviceCount = devices.filter((d) => {
-    const k = String(d.kind ?? "").toLowerCase();
-    return k === "adb" || k === "ssh" || k === "lan" || d.online !== false;
-  }).length;
-  let lanCheck: ReadinessCheck;
-  if (lanRoutes > 0 || adbOk || dongle?.ssh_available || lanDeviceCount > 0) {
-    lanCheck = {
-      id: "mici_lan",
-      label: "mici on LAN",
-      status: "ok",
-      detail:
-        lanRoutes > 0
-          ? `${lanRoutes} LAN route(s) via SSH/ADB`
-          : adbOk
-            ? "ADB path available — pick a found device in Ingest"
-            : dongle?.ssh_available
-              ? "SSH available — Find mici on LAN to list routes"
-              : `${lanDeviceCount} device(s) reported`,
-    };
-  } else if (dongle?.force_fixture) {
-    lanCheck = {
-      id: "mici_lan",
-      label: "mici on LAN",
-      status: "fixture",
-      detail: "Fixture forced — no live mici required for labeled offline path.",
-      ask: "Live training needs a mici on LAN (ADB/SSH) or Connect.",
-    };
+  const ready = readySettled.value;
+  const teacher =
+    teacherSettled.status === "fulfilled" ? teacherSettled.value : null;
+
+  const gaps = Array.isArray(ready.gaps) ? ready.gaps : [];
+  const byCode = new Set(gaps.map((g) => g.code));
+
+  const checks: ReadinessCheck[] = [];
+
+  // Always show the five calm rows; fill from gaps or ok.
+  if (byCode.has("connect_not_configured")) {
+    checks.push(gapToCheck(gaps.find((g) => g.code === "connect_not_configured")!));
   } else {
-    lanCheck = {
-      id: "mici_lan",
-      label: "mici on LAN",
-      status: "missing",
-      detail: "No ADB/SSH device found yet.",
-      ask: "Tap Find mici on LAN — pick a found ADB/SSH device. No manual IP dig.",
-    };
+    checks.push(okCheck("connect", "Connect", "Connect JWT ok or not required for this path"));
   }
 
-  // --- ≥50h driving data ---
-  let hoursCheck: ReadinessCheck;
-  if (hoursKnown && hours != null && hours >= minHours) {
-    hoursCheck = {
-      id: "hours",
-      label: "Driving data",
-      status: "ok",
-      detail: `${hours.toFixed(1)} h ≥ ${minHours} h floor`,
-    };
-  } else if (hoursKnown && hours != null) {
-    const short = Math.max(0, minHours - hours);
-    hoursCheck = {
-      id: "hours",
-      label: "Driving data",
-      status: "shortfall",
-      detail: `${hours.toFixed(1)} h of ${minHours} h — short ${short.toFixed(1)} h`,
-      ask: `Need about ${short.toFixed(1)} more hours of driving data before live train.`,
-    };
+  if (byCode.has("mici_not_found") || byCode.has("discover_error")) {
+    const g =
+      gaps.find((g) => g.code === "mici_not_found") ??
+      gaps.find((g) => g.code === "discover_error")!;
+    checks.push(gapToCheck(g));
   } else {
-    hoursCheck = {
-      id: "hours",
-      label: "Driving data",
-      status: "unknown",
-      detail: `Hours not on /health yet (need ≥${minHours} h).`,
-      ask: `Craig: expose driving_hours / hours_info on /health. Until then, fixture path is labeled offline.`,
-    };
+    checks.push(okCheck("mici_lan", "mici on LAN", "ADB/SSH path available or fixture path"));
   }
 
-  // --- Train device (tinygrad-compatible) ---
-  const chips = healthToStatusChips(health, false);
-  const deviceChip = chips.find((c) => c.key === "device");
-  const tgChip = chips.find((c) => c.key === "tinygrad");
-  let deviceCheck: ReadinessCheck;
-  if (tgChip?.tone === "fixture" || deviceChip?.tone === "fixture") {
-    deviceCheck = {
-      id: "device",
-      label: "Train device",
-      status: "fixture",
-      detail: `tinygrad ${tgChip?.value ?? "fixture"} · device ${deviceChip?.value ?? "fixture"}`,
-      ask: "Fixture backends — live train needs a tinygrad-compatible device (GPU or CPU).",
-    };
-  } else if (
-    tgChip?.tone === "ok" &&
-    (deviceChip?.tone === "ok" || deviceChip?.value === "unknown")
-  ) {
-    // tinygrad ok; device may still be unknown until Craig lands fields
-    const deviceUnknown = deviceChip?.value === "unknown";
-    deviceCheck = {
-      id: "device",
-      label: "Train device",
-      status: deviceUnknown ? "unknown" : "ok",
-      detail: `tinygrad ${tgChip.value} · ${deviceChip?.value ?? "unknown"}`,
-      ask: deviceUnknown
-        ? "tinygrad looks ok; device name pending on /health (device_name / device_status)."
-        : undefined,
-    };
-  } else if (tgChip?.tone === "warn" || tgChip?.value === "missing") {
-    deviceCheck = {
-      id: "device",
-      label: "Train device",
-      status: "missing",
-      detail: "tinygrad missing",
-      ask: "Install / expose tinygrad on this machine, then retry.",
-    };
+  if (byCode.has("insufficient_hours")) {
+    checks.push(gapToCheck(gaps.find((g) => g.code === "insufficient_hours")!));
   } else {
-    deviceCheck = {
-      id: "device",
-      label: "Train device",
-      status: "unknown",
-      detail: deviceChip
-        ? `${deviceChip.value} · tinygrad ${tgChip?.value ?? "?"}`
-        : "Checking…",
-      ask: "Waiting on /health device + tinygrad fields from Craig.",
-    };
+    const hours = ready.hours as { hours?: number; known?: boolean } | null;
+    const h = typeof hours?.hours === "number" ? hours.hours : null;
+    const floor = ready.min_train_hours ?? 50;
+    checks.push(
+      okCheck(
+        "hours",
+        "Driving data",
+        h != null ? `${h} h ≥ ${floor} h floor` : `Hours gate ok (≥${floor} h)`
+      )
+    );
   }
 
-  // --- Teacher (comma master) ---
-  const tLabel = formatTeacherLabel(teacher);
-  let teacherCheck: ReadinessCheck;
-  if (tLabel.tone === "live") {
-    teacherCheck = {
-      id: "teacher",
-      label: "Teacher",
-      status: "ok",
-      detail: tLabel.primary,
-    };
-  } else if (tLabel.tone === "fixture") {
-    teacherCheck = {
-      id: "teacher",
-      label: "Teacher",
-      status: "fixture",
-      detail: tLabel.primary,
-      ask: "Fixture teacher — live path needs comma master · <model> from /teachers.",
-    };
+  if (byCode.has("device_not_ready")) {
+    checks.push(gapToCheck(gaps.find((g) => g.code === "device_not_ready")!));
   } else {
-    teacherCheck = {
-      id: "teacher",
-      label: "Teacher",
-      status: "unknown",
-      detail: tLabel.primary,
-      ask: "Select comma-master teacher when the list lands (GET /teachers). No Chestnut.",
-    };
+    const probe = (ready.probe ?? ready.device) as Record<string, unknown> | null;
+    const name = probe && typeof probe.device_name === "string" ? probe.device_name : null;
+    const kind = probe && typeof probe.device_kind === "string" ? probe.device_kind : null;
+    checks.push(
+      okCheck(
+        "device",
+        "Train device",
+        [name, kind].filter(Boolean).join(" · ") || "tinygrad device ready"
+      )
+    );
   }
 
-  const checks = [connectCheck, lanCheck, hoursCheck, deviceCheck, teacherCheck];
+  if (byCode.has("teacher_not_selected")) {
+    checks.push(gapToCheck(gaps.find((g) => g.code === "teacher_not_selected")!));
+  } else {
+    const tLabel = formatTeacherLabel(teacher);
+    const fromReady = ready.teacher as { name?: string; source?: string } | null;
+    checks.push(
+      okCheck(
+        "teacher",
+        "Teacher",
+        tLabel.primary !== "Teacher · unknown"
+          ? tLabel.primary
+          : fromReady?.name
+            ? `${fromReady.source === "fixture" ? "fixture" : "comma master"} · ${fromReady.name}`
+            : "Teacher selected"
+      )
+    );
+  }
 
-  // Live ready only when Connect/LAN, ≥50h, device, and comma-master teacher all ok
-  const miciOk =
-    connectCheck.status === "ok" || lanCheck.status === "ok";
-  const readyLiveStrict =
-    miciOk &&
-    hoursCheck.status === "ok" &&
-    deviceCheck.status === "ok" &&
-    teacherCheck.status === "ok";
+  // Any other gaps
+  for (const g of gaps) {
+    if (
+      ![
+        "connect_not_configured",
+        "mici_not_found",
+        "discover_error",
+        "insufficient_hours",
+        "device_not_ready",
+        "teacher_not_selected",
+      ].includes(g.code)
+    ) {
+      checks.push(gapToCheck(g));
+    }
+  }
 
-  const suggestedSource: RouteSource =
-    lanCheck.status === "ok" && lanRoutes > 0
-      ? "ssh"
-      : connectCheck.status === "ok"
-        ? "connect"
-        : "fixture";
+  const hoursObj = ready.hours as { hours?: number; known?: boolean } | null;
+  const hours =
+    typeof hoursObj?.hours === "number" ? hoursObj.hours : null;
+  const hoursKnown = hoursObj?.known === true || hours != null;
+
+  const readyLive = ready.ok === true && gaps.length === 0 && !force_fixture;
+  const suggestedSource: RouteSource = force_fixture
+    ? "fixture"
+    : byCode.has("mici_not_found")
+      ? byCode.has("connect_not_configured")
+        ? "fixture"
+        : "connect"
+      : "auto";
 
   return {
     checks,
-    readyLive: readyLiveStrict,
+    readyLive,
     fixtureOk: true,
     suggestedSource,
-    dongle,
-    health,
+    ready,
     teacher,
+    gaps,
     hours,
     hoursKnown,
-    minHours,
+    minHours: ready.min_train_hours ?? 50,
   };
 }

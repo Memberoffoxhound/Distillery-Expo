@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  fetchHealth,
+  fetchStatusChipsSource,
   healthToStatusChips,
   type HealthResponse,
   type StatusChipModel,
@@ -18,7 +18,7 @@ export function StatusChips() {
   useEffect(() => {
     let cancelled = false;
     setChecking(true);
-    fetchHealth()
+    fetchStatusChipsSource()
       .then((h) => {
         if (!cancelled) setHealth(h);
       })

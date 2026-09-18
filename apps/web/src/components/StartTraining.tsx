@@ -8,31 +8,34 @@ import type { RouteSource } from "../lib/api";
 
 /**
  * Primary simple-user action: Start training.
- * Preflight asks calmly in the UI when something is missing.
- * Orchestrates via POST /jobs/pipeline (discover→…→eval; flash stays gated).
- * Fixture path always labeled — never silent.
+ * Preflight via GET /ready gaps; start via POST /jobs/train_all (never auto-flash).
+ * Fixture path always labeled — DISTILLERY_ALLOW_TOY_TRAIN still not licensed.
  */
 export function StartTraining({
   busy,
   onStart,
 }: {
   busy: boolean;
-  onStart: (opts: { source: RouteSource; includeFlash?: boolean }) => void;
+  onStart: (opts: {
+    source: RouteSource;
+    forceFixture?: boolean;
+    allowToy?: boolean;
+  }) => void | Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const [report, setReport] = useState<ReadinessReport | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const runCheck = useCallback(async () => {
+  const runCheck = useCallback(async (forceFixture = false) => {
     setChecking(true);
     setError(null);
     setOpen(true);
     try {
-      const r = await checkReadiness();
+      const r = await checkReadiness({ force_fixture: forceFixture });
       setReport(r);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Readiness check failed");
+      setError(e instanceof Error ? e.message : "GET /ready failed");
       setReport(null);
     } finally {
       setChecking(false);
@@ -41,16 +44,16 @@ export function StartTraining({
 
   const startLive = () => {
     if (!report) return;
-    onStart({
+    void onStart({
       source:
         report.suggestedSource === "fixture" ? "auto" : report.suggestedSource,
-      includeFlash: true,
+      forceFixture: false,
     });
     setOpen(false);
   };
 
   const startFixture = () => {
-    onStart({ source: "fixture", includeFlash: true });
+    void onStart({ source: "fixture", forceFixture: true });
     setOpen(false);
   };
 
@@ -61,8 +64,8 @@ export function StartTraining({
       <button
         className="primary start-training-btn"
         disabled={busy || checking}
-        onClick={() => void runCheck()}
-        title="Check readiness, then POST /jobs/pipeline — flash stays gated"
+        onClick={() => void runCheck(false)}
+        title="GET /ready then POST /jobs/train_all — never auto-flashes"
       >
         {checking ? "Checking…" : "Start training"}
       </button>
@@ -77,8 +80,8 @@ export function StartTraining({
             <div>
               <div className="readiness-title">Before we train</div>
               <div className="muted">
-                Discover → ingest → shards → teach → train → export → eval.
-                Flash stays gated (teacher-parity).
+                Live gaps from GET /ready. train_all runs ingest→…→eval — never
+                auto-flashes. Toy override still not licensed.
               </div>
             </div>
             <button
@@ -94,16 +97,14 @@ export function StartTraining({
           {error && <div className="ingest-error">{error}</div>}
 
           {checking && !report && (
-            <div className="muted">
-              Checking Connect, LAN/ADB, hours, device, teacher…
-            </div>
+            <div className="muted">Checking GET /ready gaps…</div>
           )}
 
           {report && (
             <>
               <ul className="readiness-list">
                 {report.checks.map((c) => (
-                  <ReadinessRow key={c.id} check={c} />
+                  <ReadinessRow key={`${c.id}-${c.code ?? ""}`} check={c} />
                 ))}
               </ul>
 
@@ -117,7 +118,7 @@ export function StartTraining({
                   <ul>
                     {missing.map((c) =>
                       c.ask ? (
-                        <li key={c.id}>
+                        <li key={`${c.id}-${c.code ?? ""}`}>
                           <strong>{c.label}:</strong> {c.ask}
                         </li>
                       ) : null
@@ -132,7 +133,7 @@ export function StartTraining({
                     className="primary"
                     disabled={busy}
                     onClick={startLive}
-                    title="POST /jobs/pipeline with live/auto source"
+                    title="POST /jobs/train_all"
                   >
                     Start live training
                   </button>
@@ -141,7 +142,7 @@ export function StartTraining({
                     className="primary"
                     disabled={busy}
                     onClick={startLive}
-                    title="Try pipeline with best available source"
+                    title="POST /jobs/train_all — may 409 with gaps"
                   >
                     Try anyway
                   </button>
@@ -150,21 +151,21 @@ export function StartTraining({
                   className="fixture-btn"
                   disabled={busy}
                   onClick={startFixture}
-                  title="Labeled fixture pipeline — not live / not licensed flash"
+                  title="POST /jobs/train_all {source:fixture, force_fixture:true} — labeled offline"
                 >
                   Start fixture (labeled)
                 </button>
                 <button
                   type="button"
                   disabled={checking}
-                  onClick={() => void runCheck()}
+                  onClick={() => void runCheck(false)}
                 >
                   Recheck
                 </button>
               </div>
               <p className="readiness-footnote muted">
-                Fixture is always labeled offline. Flash never auto-writes — eval
-                gate + confirm.
+                Fixture / DISTILLERY_ALLOW_TOY_TRAIN=1 is always labeled offline
+                and not licensed. Flash never auto-writes.
               </p>
             </>
           )}

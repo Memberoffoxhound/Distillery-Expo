@@ -1,0 +1,40 @@
+# Distillery Expo — default M0 config
+dongle_id: "3e2de7ed673817c2"
+
+hardware:
+  mici:
+    connect: comma  # comma Connect + local/SSH
+    cams: [road, wide, driver]
+  teacher_gpu: "AMD Radeon RX 7090 XT"
+  # NO Chestnut in v1
+
+teacher:
+  name: "Cinque/supercombo"
+  device: "7090 XT"
+  # placeholder — real weights wired in later milestone
+  checkpoint: null
+
+student:
+  name: "stock-modelV2-I/O"
+  target: "mici/QCOM"
+  # I/O compatible with stock modelV2
+  io_compatible: true
+  checkpoint: null
+
+pipeline:
+  stages:
+    - ingest
+    - shard
+    - teach
+    - train
+    - export
+    - eval
+    - flash
+  flash_gated: true  # always require explicit confirm
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+
+web:
+  port: 5173

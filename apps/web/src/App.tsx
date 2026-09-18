@@ -56,27 +56,6 @@ export default function App() {
               job.startTrainAll({ source, forceFixture, allowToy })
             }
           />
-          <button
-            disabled={busy}
-            onClick={() => job.startIngest({ source: "fixture" })}
-            title="POST /jobs/ingest {source:fixture}"
-          >
-            Pull mici route
-          </button>
-          <button
-            disabled={busy}
-            onClick={() => job.startShard({ source: "fixture" })}
-            title="POST /jobs/shard {source:fixture}"
-          >
-            Pack shards
-          </button>
-          <button
-            disabled={busy}
-            onClick={() => job.startDemo()}
-            title="Legacy staged demo (flash stays gated)"
-          >
-            Run demo
-          </button>
         </div>
       </header>
 

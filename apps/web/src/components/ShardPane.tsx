@@ -172,7 +172,7 @@ export function ShardPane({ events }: { events: DistilleryEvent[] }) {
         <EmptyState
           title="Waiting to pack"
           body="Ingest is done. This pane stays quiet until the pipeline emits shard stage, progress, or metric events."
-          hint="Pack shards runs a dedicated pack job · Run demo also streams pack events."
+          hint="Pack shards after a live ingest · /jobs/shard"
         />
       );
     }

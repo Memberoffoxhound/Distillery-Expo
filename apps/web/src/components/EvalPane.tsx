@@ -75,7 +75,7 @@ export function EvalPane({ events }: { events: DistilleryEvent[] }) {
         <EmptyState
           title="Scorecard pending"
           body="Waiting for offline eval. Not licensed yet until teacher-parity numbers land (agreement / replay / MAE) — this pane stays quiet until then."
-          hint="Run demo streams eval · /jobs/eval later"
+          hint="Start training runs eval after train · /jobs/eval"
         />
       );
     }

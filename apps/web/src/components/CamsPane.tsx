@@ -58,7 +58,7 @@ export function CamsPane({ events }: { events: DistilleryEvent[] }) {
       <EmptyState
         title="Cams waiting"
         body="Road, wide, and driver surfaces appear when an ingest job emits sample events."
-        hint="Pull a mici route from Ingest — fixture path is fine for M1."
+        hint="Connect/SSH/ADB a mici route from Ingest, then cams appear here."
       />
     );
   }

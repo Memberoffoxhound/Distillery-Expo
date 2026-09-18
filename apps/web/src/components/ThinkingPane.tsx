@@ -9,7 +9,7 @@ export function ThinkingPane({ events }: { events: DistilleryEvent[] }) {
       <EmptyState
         title="Decision timeline quiet"
         body="When ingest or the demo chooses a route source, the rationale appears here."
-        hint="Start with Ingest fixture or Run demo."
+        hint="Ingest a live mici route, then Start training."
       />
     );
   }

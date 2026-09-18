@@ -271,6 +271,24 @@ export function fetchDongle(): Promise<DongleInfo> {
   return jsonFetch("/dongle");
 }
 
+/** Persist dongle id (env + .cache/dongle_id) — mirrors Save JWT. */
+export function saveDongleId(dongleId: string, persist = true): Promise<DongleInfo> {
+  return jsonFetch("/dongle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dongle_id: dongleId, persist }),
+  });
+}
+
+/** Alias under /discover/dongle (same payload). */
+export function postDiscoverDongle(dongleId: string, persist = true): Promise<DongleInfo> {
+  return jsonFetch("/discover/dongle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dongle_id: dongleId, persist }),
+  });
+}
+
 export function fetchHealth(): Promise<HealthResponse> {
   return jsonFetch("/health");
 }

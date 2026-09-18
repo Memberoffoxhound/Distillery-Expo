@@ -38,7 +38,11 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** → click **Run demo** (or it auto-starts). Watch the job rail, Thinking timeline, cams placeholders, and staged events stream over WebSocket.
+Open **http://localhost:5173**.
+
+**M1 simple-user path:** Ingest pane lists mici routes (`GET /routes`) → **Ingest fixture** / **Pull mici route** (`POST /jobs/ingest`) → cams show road/wide/driver samples with route/dongle meta over `WS /ws/jobs/{id}`. Job rail shows elapsed time + weight as stages move. Flash confirm stays gated.
+
+**M0:** **Run demo** still runs the full staged pipeline (flash gated).
 
 ### Ingest thin slice (M1)
 

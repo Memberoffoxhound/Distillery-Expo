@@ -240,7 +240,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .grid {
   display: grid;
   grid-template-columns: 1.15fr 1fr 1.1fr 1fr;
-  grid-template-rows: 1fr 1fr 1.15fr;
+  grid-template-rows: minmax(14rem, 1.25fr) 1fr 1.15fr;
   gap: 0.55rem;
   padding: 0.55rem;
   height: 100%;
@@ -283,7 +283,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   min-height: 0;
 }
 
-.pane.ingest { grid-column: 1; grid-row: 1; }
+.pane.ingest { grid-column: 1; grid-row: 1; min-height: 0; }
 .pane.cams { grid-column: 2; grid-row: 1; }
 .pane.shard { grid-column: 3; grid-row: 1; }
 .pane.teacher { grid-column: 4; grid-row: 1; }
@@ -488,8 +488,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .route-list {
   flex: 1 1 auto;
-  min-height: 5rem;
-  max-height: min(42vh, 20rem);
+  /* TV / short panes: list must be unmissable above the fold */
+  min-height: max(12rem, 40%);
+  max-height: none;
   overflow-x: hidden;
   overflow-y: auto;
   display: flex;
@@ -500,6 +501,42 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   padding: 0.35rem;
   background: rgba(0, 0, 0, 0.18);
   /* Keep all N routes selectable — never clip under SSH form / actions */
+}
+.ingest-pane.has-routes .route-list {
+  min-height: max(14rem, 48%);
+  flex: 1 1 50%;
+}
+.ingest-dongle-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ingest-dongle-row input {
+  flex: 1 1 12rem;
+  min-width: 10rem;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border, #333);
+  background: var(--panel, #12141a);
+  color: inherit;
+}
+.ingest-ssh-details {
+  margin: 0.15rem 0;
+  font-size: 0.72rem;
+  color: var(--text-mute);
+}
+.ingest-ssh-details > summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 0.2rem 0;
+  color: var(--text-dim);
+}
+.ingest-actions.fixture-last-resort {
+  opacity: 0.75;
+  margin-top: 0.15rem;
 }
 .route-row {
   text-align: left;

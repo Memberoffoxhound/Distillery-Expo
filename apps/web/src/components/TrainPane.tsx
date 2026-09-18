@@ -44,7 +44,7 @@ export function TrainPane({ events }: { events: DistilleryEvent[] }) {
         <EmptyState
           title="Waiting to train"
           body="Soft labels are ready. This pane stays quiet until the pipeline emits train stage, progress, or metric events."
-          hint="Run demo streams train · /jobs/train later"
+          hint="Start training runs live train · /jobs/train"
         />
       );
     }

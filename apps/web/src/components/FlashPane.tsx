@@ -79,7 +79,7 @@ export function FlashPane({
       <div className="flash-box flash-locked">
         <EmptyState
           title="Not licensed yet"
-          body="We're training a driving agent. Confirm stays disabled until the student matches the teacher (eval_passed=true) and flash is gated. Default closed — solid distill, not a permit."
+          body="We're training a driving agent. Confirm stays disabled until the student matches the teacher (eval_passed=true) and flash is gated. When licensed, Expo pushes driving_supercombo.onnx over SSH to mici — never auto."
           hint={
             ingestOnly
               ? "Ingest/shard jobs never unlock flash"
@@ -90,7 +90,7 @@ export function FlashPane({
           Expo is workstation mission control only. Never auto-write to mici.
         </p>
         <button className="danger" disabled title="Locked — eval_passed required">
-          Confirm flash
+          Confirm SSH push
         </button>
       </div>
     );
@@ -105,16 +105,16 @@ export function FlashPane({
           stays unlicensed for on-road use.
         </p>
         <button className="danger" disabled>
-          Confirm flash
+          Confirm SSH push
         </button>
       </div>
     );
   }
 
   const headline = done
-    ? "Flash complete (simulated)"
+    ? "SSH push complete (simulated)"
     : running
-      ? "Writing to device…"
+      ? "Pushing over SSH…"
       : canConfirm
         ? fixture
           ? "Confirm carefully — live=false"
@@ -122,13 +122,13 @@ export function FlashPane({
         : "Not licensed yet";
 
   const body = done
-    ? "Simulated write finished. Real mici / QCOM flash still needs eval_passed and your confirm."
+    ? "Simulated SSH push finished. Production writes driving_supercombo.onnx to mici over SSH after eval_passed and your confirm."
     : running
-      ? "Transferring the mici-fit ONNX student (simulated). Expo stays on the workstation."
+      ? "Pushing driving_supercombo.onnx over SSH (simulated). Expo stays on the workstation; mici gets a drop-in model."
       : canConfirm
         ? fixture
-          ? "eval_passed=true on a live=false / fixture path. Confirm only for a simulated write — not a road license."
-          : "eval_passed=true. Confirm to write the stock-modelV2 I/O ONNX student to mici / QCOM. Never auto-flash."
+          ? "eval_passed=true on a live=false / fixture path. Confirm only simulates SSH push of driving_supercombo.onnx — not a road license."
+          : "eval_passed=true (matches teacher). Confirm pushes driving_supercombo.onnx over SSH to mici as a drop-in replacement. Never auto-flash."
         : flashGated && !evalPassed
           ? "Flash is gated but eval_passed=false — student does not yet match teacher. Confirm stays locked."
           : "Flash stage is gated but eval has not passed — confirm stays locked.";
@@ -145,7 +145,7 @@ export function FlashPane({
         <span
           className={`stage-status ${done ? "done" : running ? "running" : canConfirm ? "gated" : "gated"}`}
         >
-          {done ? "done" : running ? "writing" : canConfirm ? "confirm" : "locked"}
+          {done ? "done" : running ? "pushing" : canConfirm ? "confirm" : "locked"}
         </span>
       </div>
       <p>{body}</p>
@@ -172,7 +172,7 @@ export function FlashPane({
           <div className="stage-progress-meta">
             <span className="mono">{pct(barWidth)}</span>
             <span className="muted">
-              {detail ?? (done ? "done" : "writing…")}
+              {detail ?? (done ? "done" : "pushing…")}
             </span>
           </div>
         </div>
@@ -183,11 +183,11 @@ export function FlashPane({
         onClick={onConfirm}
         title={
           canConfirm
-            ? "Write mici-fit ONNX student (simulated) — your confirm"
-            : "Locked until eval_passed=true and flash is gated"
+            ? "SSH push driving_supercombo.onnx to mici (simulated) — your confirm"
+            : "Locked until eval_passed=true (matches teacher) and flash is gated"
         }
       >
-        {done ? "Flashed" : running ? "Writing…" : "Confirm flash"}
+        {done ? "Pushed" : running ? "Pushing…" : "Confirm SSH push"}
       </button>
     </div>
   );

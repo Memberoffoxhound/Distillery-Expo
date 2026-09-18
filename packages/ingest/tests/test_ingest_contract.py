@@ -97,3 +97,79 @@ def test_list_routes_api_shape():
     summary = routes[0].summary_dict()
     for key in ("route_id", "dongle_id", "display_name", "source", "segment_count", "meta"):
         assert key in summary
+
+
+def test_explicit_ssh_empty_no_fixture_swap(monkeypatch):
+    """prefer=ssh + empty realdata → honest empty, never silent fixture."""
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+    monkeypatch.setenv("MICI_SSH_HOST", "192.168.1.50")
+
+    from distillery_ingest.config import load_ingest_config
+    from distillery_ingest.resolve import list_routes
+    from distillery_ingest.sources.ssh import REALDATA, SshRouteSource
+
+    cfg = load_ingest_config()
+    assert cfg.force_fixture is False
+    assert cfg.ssh_host == "192.168.1.50"
+
+    monkeypatch.setattr(SshRouteSource, "list_routes", lambda self, *, limit=20: [])
+
+    result = list_routes(cfg, prefer="ssh", limit=10)
+    src, routes = result
+    assert src.name == "ssh"
+    assert routes == []
+    assert result.empty_reason == "empty_realdata"
+    assert result.message == f"SSH ok · 0 routes under {REALDATA}"
+    assert result.error is None
+
+
+def test_explicit_ssh_error_no_fixture_swap(monkeypatch):
+    """prefer=ssh + SSH failure → honest empty/error, not fixture routes."""
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+    monkeypatch.setenv("MICI_SSH_HOST", "192.168.1.50")
+
+    from distillery_ingest.config import load_ingest_config
+    from distillery_ingest.resolve import list_routes
+    from distillery_ingest.sources.ssh import SshRouteSource
+
+    cfg = load_ingest_config()
+
+    def _boom(self, *, limit=20):
+        raise RuntimeError("Permission denied (publickey)")
+
+    monkeypatch.setattr(SshRouteSource, "list_routes", _boom)
+
+    result = list_routes(cfg, prefer="ssh", limit=10)
+    src, routes = result
+    assert src.name == "ssh"
+    assert routes == []
+    assert result.empty_reason == "ssh_error"
+    assert result.error and "Permission denied" in result.error
+    assert result.message and result.message.startswith("SSH error")
+
+
+def test_auto_still_falls_back_to_fixture_on_ssh_empty(monkeypatch):
+    """prefer=auto keeps labeled fixture fallback when live is empty."""
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+    monkeypatch.setenv("MICI_SSH_HOST", "192.168.1.50")
+    monkeypatch.delenv("COMMA_JWT", raising=False)
+    monkeypatch.delenv("CONNECT_JWT", raising=False)
+
+    from distillery_ingest.config import load_ingest_config
+    from distillery_ingest.resolve import list_routes
+    from distillery_ingest.sources.ssh import SshRouteSource
+
+    # Avoid hydrate from .cache/connect_jwt if present
+    cfg = load_ingest_config()
+    # Force no connect by clearing jwt on a copy-like override via monkeypatch env already
+
+    monkeypatch.setattr(SshRouteSource, "list_routes", lambda self, *, limit=20: [])
+    # If connect is somehow configured, stub it empty too
+    from distillery_ingest.sources.connect import ConnectRouteSource
+
+    monkeypatch.setattr(ConnectRouteSource, "available", lambda self: False)
+
+    result = list_routes(cfg, prefer="auto", limit=5)
+    src, routes = result
+    assert src.name == "fixture"
+    assert len(routes) >= 1

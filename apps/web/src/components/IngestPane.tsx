@@ -108,6 +108,13 @@ function connectionState(
     adbStatus === "ready";
 
   if (mode === "lan" && routeCount === 0) {
+    if (listSource === "ssh" || dongle.ssh_available) {
+      return {
+        label: "SSH · 0 routes",
+        tone: "empty",
+        detail: "SSH ok · 0 routes under /data/media/0/realdata",
+      };
+    }
     if (!lanReady && dongle.adb_available !== true && !dongle.ssh_available) {
       return {
         label: "Offline",
@@ -177,6 +184,8 @@ export function IngestPane({
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
+  const [routesMessage, setRoutesMessage] = useState<string | null>(null);
+  const [emptyReason, setEmptyReason] = useState<string | null>(null);
   const [prefer, setPrefer] = useState<RouteSource>("fixture");
   const [mode, setMode] = useState<DiscoverMode>("fixture");
   const [lanNote, setLanNote] = useState<string | null>(null);
@@ -193,6 +202,8 @@ export function IngestPane({
   const load = useCallback(async (source: RouteSource, nextMode?: DiscoverMode, deviceId?: string | null) => {
     setLoading(true);
     setListError(null);
+    setRoutesMessage(null);
+    setEmptyReason(null);
     if (nextMode) setMode(nextMode);
     try {
       const [d, overview, adb, r] = await Promise.all([
@@ -234,12 +245,22 @@ export function IngestPane({
         })),
       };
       setDongle(enriched);
-      setRoutes(r.routes);
-      setListSource(r.source);
+      // Explicit source=ssh|connect: never present fixture rows as live SSH/Connect.
+      const askedLive = source === "ssh" || source === "connect";
+      const swappedToFixture = askedLive && r.source === "fixture";
+      setRoutes(swappedToFixture ? [] : r.routes);
+      setListSource(swappedToFixture ? source : r.source);
+      setRoutesMessage(
+        swappedToFixture
+          ? "SSH/Connect returned fixture unexpectedly — showing empty until you pick Show fixture."
+          : r.message ?? null
+      );
+      setEmptyReason(swappedToFixture ? "refused_fixture_swap" : r.empty_reason ?? null);
       setPrefer(source);
+      const shown = swappedToFixture ? [] : r.routes;
       setSelected((prev) => {
-        if (prev && r.routes.some((x) => x.route_id === prev)) return prev;
-        return r.routes[0]?.route_id ?? null;
+        if (prev && shown.some((x) => x.route_id === prev)) return prev;
+        return shown[0]?.route_id ?? null;
       });
 
       // Hydrate SSH form from status; prefill host from ADB tcp suggested_host when empty
@@ -256,15 +277,25 @@ export function IngestPane({
       }
 
       if (nextMode === "lan" || source === "ssh" || source === "auto") {
-        if (adbDevices.length > 0) {
+        const effectiveSource = swappedToFixture ? source : r.source;
+        if (
+          shown.length === 0 &&
+          (source === "ssh" || effectiveSource === "ssh" || enriched.ssh_available || Boolean(r.message))
+        ) {
+          // Honest SSH empty beats ADB chatter — Phil: connected but 0 routes under realdata.
+          setLanNote(
+            r.message ||
+              "SSH ok · 0 routes under /data/media/0/realdata — record a drive, verify path, or use fixture."
+          );
+        } else if (adbDevices.length > 0) {
           setLanNote(
             `${adbDevices.length} ADB device${adbDevices.length === 1 ? "" : "s"} via GET /discover/devices — pick one, then a route.`
           );
-        } else if (!enriched.ssh_available && r.routes.length === 0) {
+        } else if (!enriched.ssh_available && shown.length === 0) {
           setLanNote(
             "No ADB devices and SSH not configured. Use Connect JWT or fixture."
           );
-        } else if (r.routes.length === 0) {
+        } else if (shown.length === 0) {
           setLanNote("Discovery ok, but no routes returned. Try Connect or fixture.");
         } else {
           setLanNote(null);
@@ -281,6 +312,8 @@ export function IngestPane({
     } catch (e) {
       setListError(e instanceof Error ? e.message : "Could not load routes");
       setRoutes([]);
+      setRoutesMessage(null);
+      setEmptyReason(null);
       setLanNote(null);
     } finally {
       setLoading(false);
@@ -654,9 +687,51 @@ export function IngestPane({
         )}
         {!loading && !listError && routes.length === 0 && mode === "lan" && (
           <EmptyState
-            title="Nothing on LAN yet"
-            body="No ADB or SSH routes found. Fixture stays the labeled fallback until a device appears."
-            hint="GET /discover/devices + /routes?source=ssh&device=…"
+            title={
+              listSource === "ssh" || sshConfigured || dongle?.ssh_available
+                ? "SSH · 0 routes"
+                : "Nothing on LAN yet"
+            }
+            body={
+              routesMessage ||
+              (listSource === "ssh" || sshConfigured || dongle?.ssh_available
+                ? "SSH ok · 0 routes under /data/media/0/realdata"
+                : "No ADB or SSH routes found. Fixture is a labeled fallback — pick it explicitly.")
+            }
+            hint={
+              emptyReason
+                ? `empty_reason=${emptyReason}`
+                : "GET /routes?source=ssh"
+            }
+            actions={
+              <>
+                <button
+                  type="button"
+                  disabled={loading}
+                  title="Record a drive on mici, then Refresh"
+                  onClick={() => void load("ssh", "lan", pickedDevice)}
+                >
+                  Record a drive / Refresh
+                </button>
+                <button
+                  type="button"
+                  disabled={loading}
+                  title="Re-check SSH host and /data/media/0/realdata"
+                  onClick={() => void testSsh()}
+                >
+                  Verify path
+                </button>
+                <button
+                  type="button"
+                  className="fixture-btn"
+                  disabled={loading}
+                  title="Labeled fixture — not live SSH"
+                  onClick={useFixture}
+                >
+                  Use fixture
+                </button>
+              </>
+            }
           />
         )}
         {!loading && !listError && routes.length === 0 && mode === "connect" && (

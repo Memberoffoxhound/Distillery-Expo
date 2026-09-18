@@ -1074,20 +1074,31 @@ async def get_routes(
 
     After discovery, pass `device` and/or `ssh_host` (+ `source`) so the picker
     does not require shell env archaeology.
+
+    Explicit source=ssh|connect never silently swaps to fixture when empty/error —
+    response stays source=ssh|connect with routes=[] and message/empty_reason.
     """
     cfg = apply_discovered_overrides(
         load_ingest_config(),
         ssh_host=ssh_host,
         device_id=device,
     )
-    src, routes = ingest_list_routes(cfg, prefer=source, limit=limit)
-    return {
+    result = ingest_list_routes(cfg, prefer=source, limit=limit)
+    src, routes = result
+    out: dict[str, Any] = {
         "dongle_id": cfg.dongle_id,
         "source": src.name,
         "device": device,
         "ssh_host": cfg.ssh_host,
         "routes": [r.summary_dict() for r in routes],
     }
+    if getattr(result, "message", None):
+        out["message"] = result.message
+    if getattr(result, "empty_reason", None):
+        out["empty_reason"] = result.empty_reason
+    if getattr(result, "error", None):
+        out["error"] = result.error
+    return out
 
 
 @app.get("/routes/{route_id:path}")
@@ -1098,7 +1109,12 @@ async def get_route_detail(
     from distillery_ingest.resolve import get_route as ingest_get_route
 
     cfg = load_ingest_config()
-    src, route = ingest_get_route(route_id, cfg, prefer=source)
+    try:
+        src, route = ingest_get_route(route_id, cfg, prefer=source)
+    except Exception as exc:  # noqa: BLE001 — explicit live sources must not 500 as fixture
+        if source in ("ssh", "connect"):
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise
     return {"source": src.name, "route": route.model_dump(mode="json")}
 
 

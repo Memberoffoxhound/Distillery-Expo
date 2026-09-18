@@ -22,6 +22,10 @@ export interface RoutesResponse {
   device?: string | null;
   ssh_host?: string | null;
   routes: RouteSummary[];
+  /** Honest empty/error copy when source=ssh|connect and no silent fixture swap. */
+  message?: string | null;
+  empty_reason?: string | null;
+  error?: string | null;
 }
 
 /** Today’s /dongle + tolerant placeholders for Craig’s richer device discovery. */

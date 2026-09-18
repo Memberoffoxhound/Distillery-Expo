@@ -323,6 +323,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   color: var(--text-mute);
   opacity: 0.75;
 }
+.empty-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+}
+.empty-state-actions button {
+  font-size: 0.72rem;
+  padding: 0.28rem 0.55rem;
+}
 
 /* Ingest pane */
 .ingest-pane {

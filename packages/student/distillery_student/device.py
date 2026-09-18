@@ -2,6 +2,9 @@
 
 Craig (and /health) can import ``probe_train_device`` for a sync status dict.
 Reports whatever tinygrad can use (GPU if present, else CPU/other).
+
+``force_fixture`` only marks the *data/teacher* path as fixture (live=false) —
+it does **not** mean the train device is unavailable. CPU is a valid device.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ def _env_truthy(name: str) -> bool:
 
 def _classify_kind(name: str) -> str:
     upper = (name or "").upper()
-    if not upper or upper in ("NONE", "UNKNOWN", "FIXTURE"):
+    if not upper or upper in ("NONE", "UNKNOWN"):
         return "unknown"
     if upper == "CPU" or upper.startswith("CPU"):
         return "cpu"
@@ -64,21 +67,14 @@ def probe_train_device(*, force_fixture: bool = False) -> dict[str, Any]:
     """Sync train-device probe for health / Craig.
 
     Keys: device_found, device_ready, device_kind, device_name, tinygrad
-    ``tinygrad`` ∈ {ok, missing, fixture}; ``device_kind`` ∈ {gpu, cpu, unknown}.
-    """
-    if force_fixture or _env_truthy("DISTILLERY_STUDENT_FIXTURE"):
-        return {
-            "device_found": False,
-            "device_ready": False,
-            "device_kind": "unknown",
-            "device_name": "fixture",
-            "tinygrad": "fixture",
-            "live": False,
-            "source": "fixture",
-            "detail": "force_fixture — train device probe labeled live=false / not licensed",
-        }
+    ``tinygrad`` ∈ {ok, missing}; ``device_kind`` ∈ {gpu, cpu, unknown}.
 
+    ``force_fixture`` does not invent a dead device — it only tags
+    ``data_source=fixture`` / ``live=false`` for the soft-label path.
+    """
+    fixture = force_fixture or _env_truthy("DISTILLERY_STUDENT_FIXTURE")
     tg_status, device_name, device_kind = _probe_tinygrad_device()
+
     if tg_status == "missing":
         return {
             "device_found": False,
@@ -88,6 +84,7 @@ def probe_train_device(*, force_fixture: bool = False) -> dict[str, Any]:
             "tinygrad": "missing",
             "live": False,
             "source": "probe",
+            "data_source": "fixture" if fixture else "live",
             "detail": "tinygrad not installed — cannot bind a train device",
         }
 
@@ -99,7 +96,11 @@ def probe_train_device(*, force_fixture: bool = False) -> dict[str, Any]:
         "device_kind": device_kind if found else "unknown",
         "device_name": device_name,
         "tinygrad": "ok",
-        "live": False,
+        "live": False,  # ship-today: never claim licensed/live GPU teach
         "source": "tinygrad",
-        "detail": f"tinygrad Device.DEFAULT={device_name} kind={device_kind}",
+        "data_source": "fixture" if fixture else "live",
+        "detail": (
+            f"tinygrad Device.DEFAULT={device_name} kind={device_kind}"
+            + ("; data path fixture / not licensed" if fixture else "")
+        ),
     }

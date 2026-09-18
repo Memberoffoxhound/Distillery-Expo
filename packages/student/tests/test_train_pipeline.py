@@ -42,18 +42,23 @@ def test_probe_train_device_keys_without_tinygrad():
         "tinygrad",
     ):
         assert key in info
-    assert info["tinygrad"] in ("ok", "missing", "fixture")
+    assert info["tinygrad"] in ("ok", "missing")
     assert info["device_kind"] in ("gpu", "cpu", "unknown")
-    # No tinygrad installed in CI → missing (or ok if somehow present)
-    if info["tinygrad"] == "missing":
-        assert info["device_ready"] is False
+    assert info["live"] is False
 
 
 def test_probe_force_fixture_labeled():
+    """force_fixture tags data_source — does not invent a dead device."""
     info = probe_train_device(force_fixture=True)
-    assert info["tinygrad"] == "fixture"
+    assert info.get("data_source") == "fixture"
     assert info["live"] is False
-    assert info["device_name"] == "fixture"
+    # Real probe: tinygrad ok|missing, never the old fake "fixture" device status
+    assert info["tinygrad"] in ("ok", "missing")
+    if info["tinygrad"] == "ok":
+        assert info["device_ready"] is True
+        assert info["device_name"] != "fixture"
+    else:
+        assert info["device_ready"] is False
 
 
 def test_hours_floor_refuses_unknown(tmp_path):
@@ -176,9 +181,26 @@ def test_train_pipeline_emits_loss_metrics():
 
 
 def test_check_train_readiness_reports_gaps(monkeypatch, tmp_path):
+    """force_fixture ≠ device_not_ready — fixture path with a ready device must not gap device."""
     monkeypatch.delenv("DISTILLERY_ALLOW_TOY_TRAIN", raising=False)
     from dataclasses import replace
 
+    import distillery_student.readiness as readiness_mod
+
+    def _ready_cpu(*, force_fixture: bool = False):
+        return {
+            "device_found": True,
+            "device_ready": True,
+            "device_kind": "cpu",
+            "device_name": "CPU",
+            "tinygrad": "ok",
+            "live": False,
+            "source": "tinygrad",
+            "data_source": "fixture" if force_fixture else "live",
+            "detail": "tinygrad Device.DEFAULT=CPU kind=cpu; data path fixture / not licensed",
+        }
+
+    monkeypatch.setattr(readiness_mod, "probe_train_device", _ready_cpu)
     cfg = replace(
         load_student_config(),
         soft_labels_dir=tmp_path / "soft",
@@ -191,8 +213,42 @@ def test_check_train_readiness_reports_gaps(monkeypatch, tmp_path):
     assert ready["ok"] is False
     codes = {g["code"] for g in ready["gaps"]}
     assert "insufficient_hours" in codes
-    assert "device_not_ready" in codes
+    assert "device_not_ready" not in codes
+    assert ready["device"]["device_ready"] is True
+    assert ready["device"].get("data_source") == "fixture"
     # fixture teacher without toy → teacher_not_selected gap
     assert "teacher_not_selected" in codes
     for g in ready["gaps"]:
         assert "code" in g and "message" in g
+
+
+def test_check_train_readiness_device_not_ready_when_probe_fails(monkeypatch, tmp_path):
+    monkeypatch.delenv("DISTILLERY_ALLOW_TOY_TRAIN", raising=False)
+    from dataclasses import replace
+
+    import distillery_student.readiness as readiness_mod
+
+    def _dead_device(*, force_fixture: bool = False):
+        return {
+            "device_found": False,
+            "device_ready": False,
+            "device_kind": "unknown",
+            "device_name": "none",
+            "tinygrad": "missing",
+            "live": False,
+            "source": "probe",
+            "detail": "monkeypatched missing tinygrad",
+        }
+
+    monkeypatch.setattr(readiness_mod, "probe_train_device", _dead_device)
+    cfg = replace(
+        load_student_config(),
+        soft_labels_dir=tmp_path / "soft",
+        shards_dir=tmp_path / "shards",
+        allow_toy_train=True,
+        force_fixture=False,
+        min_train_hours=50.0,
+    )
+    ready = check_train_readiness(cfg=cfg, force_fixture=False, allow_toy=True, teacher_name="driving_supercombo")
+    codes = {g["code"] for g in ready["gaps"]}
+    assert "device_not_ready" in codes

@@ -1,0 +1,58 @@
+{
+  "for": "Jony (UI) + Graig (consume)",
+  "endpoint": "POST /teachers/pull",
+  "purpose": "Pull live big_driving_supercombo only into artifacts/teachers/ with progress bus events",
+  "body": {
+    "force_fixture": false,
+    "force_download": false
+  },
+  "body_notes": {
+    "force_fixture": "Skip network; emit labeled fixture · big_driving_supercombo (live=false)",
+    "force_download": "Ignore good cache and re-fetch from comma master"
+  },
+  "response_200": {
+    "id": "<job_id>",
+    "kind": "teacher_pull",
+    "status": "pending",
+    "created_at": "<iso8601>",
+    "event_count": 0,
+    "route_id": null,
+    "teacher": "big_driving_supercombo",
+    "default_teacher": "big_driving_supercombo",
+    "label": "comma master · big_driving_supercombo | fixture · big_driving_supercombo | pulling · big_driving_supercombo",
+    "live": false,
+    "cached": false,
+    "ok": null,
+    "teacher_artifact": null,
+    "ws": "/ws/jobs/<job_id>",
+    "events_url": "/jobs/<job_id>/events"
+  },
+  "bind": {
+    "start": "POST /teachers/pull with {} or {force_download:true}",
+    "progress": "Subscribe WS /ws/jobs/{id} (or poll GET /jobs/{id}/events)",
+    "progress_filter": "kind=progress AND stage=teach; payload.fraction 0..1; payload.detail; payload.teacher=big_driving_supercombo",
+    "done": "kind=stage stage=teach payload.name=teach payload.status=done; payload.label / payload.teacher.label",
+    "live_label": "comma master · big_driving_supercombo",
+    "fixture_label": "fixture · big_driving_supercombo",
+    "refresh_chip": "GET /teachers after done for teacher_artifact + label",
+    "never": ["driving_supercombo", "Chestnut", "silent live"]
+  },
+  "events": [
+    {"kind": "stage", "stage": "teach", "payload": {"name": "teach", "status": "running", "detail": "pull · big_driving_supercombo"}},
+    {"kind": "progress", "stage": "teach", "payload": {"fraction": 0.02, "detail": "ensure teacher ONNX · big_driving_supercombo", "teacher": "big_driving_supercombo"}},
+    {"kind": "progress", "stage": "teach", "payload": {"fraction": 0.5, "detail": "download big_driving_supercombo ...", "teacher": "big_driving_supercombo"}},
+    {"kind": "decision", "stage": "teach", "payload": {"chosen": "<label>", "label": "<label>", "live": true, "cached": false, "ok": true, "sha256": "<hex>", "teacher": {"name": "big_driving_supercombo", "role": "big"}}},
+    {"kind": "warning", "stage": "teach", "when": "offline/fixture", "payload": {"code": "TEACHER_NOT_LIVE", "recoverable": true, "label": "fixture · big_driving_supercombo"}},
+    {"kind": "stage", "stage": "teach", "payload": {"name": "teach", "status": "done", "detail": "<label>", "live": true, "ok": true, "teacher": {}}}
+  ],
+  "related": {
+    "list": "GET /teachers",
+    "train_all_still_ensures": "POST /jobs/train_all and teach pipeline call ensure_big_teacher_onnx if missing",
+    "artifact_paths": [
+      "artifacts/teachers/big_driving_supercombo.onnx",
+      "artifacts/teachers/big_driving_supercombo.onnx.sha256",
+      "artifacts/teachers/big_driving_supercombo.json"
+    ]
+  },
+  "idempotent": "If cache checksum OK, skip re-download (cached=true, live=true, label=comma master · big_driving_supercombo)"
+}

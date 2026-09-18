@@ -138,6 +138,12 @@ class TrainAllRequest(BaseModel):
     force_fixture: bool = False
 
 
+class TeacherPullRequest(BaseModel):
+    """Pull big_driving_supercombo only into artifacts/teachers/ (never small model)."""
+    force_fixture: bool = False
+    force_download: bool = False
+
+
 class ConnectJwtRequest(BaseModel):
     """Set comma Connect JWT without shell/env archaeology."""
     jwt: str = Field(..., min_length=1)
@@ -211,6 +217,10 @@ async def _broadcast(job_id: str, event: dict[str, Any]) -> None:
             job.status = "done"
         elif job.kind == "eval" and name == "eval" and st == "done":
             job.status = "done"
+        elif job.kind == "teacher_pull" and name == "teach" and st == "done":
+            job.status = "done"
+        elif job.kind == "teacher_pull" and name == "teach" and st == "failed":
+            job.status = "failed"
         elif st == "running" and job.status == "pending":
             job.status = "running"
     for q in list(_subscribers.get(job_id, [])):
@@ -854,6 +864,238 @@ async def _run_train_all_job(
         )
 
 
+
+async def _run_teacher_pull_job(
+    job_id: str,
+    *,
+    force_fixture: bool = False,
+    force_download: bool = False,
+) -> None:
+    """Pull big_driving_supercombo into artifacts/teachers/ with progress on the job bus."""
+    from distillery_teacher.download import BIG_TEACHER_NAME, ensure_big_teacher_onnx
+
+    job = _jobs[job_id]
+    job.status = "running"
+    loop = asyncio.get_running_loop()
+    progress_q: asyncio.Queue[tuple[float, str] | None] = asyncio.Queue()
+
+    def _prog(frac: float, detail: str) -> None:
+        try:
+            loop.call_soon_threadsafe(progress_q.put_nowait, (float(frac), str(detail)))
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _drain_progress() -> None:
+        while True:
+            item = await progress_q.get()
+            if item is None:
+                break
+            frac, detail = item
+            await _broadcast(
+                job_id,
+                {
+                    "id": str(uuid4()),
+                    "ts": _now(),
+                    "job_id": job_id,
+                    "kind": "progress",
+                    "stage": "teach",
+                    "payload": {
+                        "fraction": max(0.0, min(1.0, frac)),
+                        "detail": detail,
+                        "teacher": BIG_TEACHER_NAME,
+                    },
+                },
+            )
+
+    drain_task = asyncio.create_task(_drain_progress())
+    try:
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "stage",
+                "stage": "teach",
+                "payload": {
+                    "name": "teach",
+                    "status": "running",
+                    "detail": f"pull · {BIG_TEACHER_NAME}",
+                },
+            },
+        )
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "progress",
+                "stage": "teach",
+                "payload": {
+                    "fraction": 0.02,
+                    "detail": f"ensure teacher ONNX · {BIG_TEACHER_NAME}",
+                    "teacher": BIG_TEACHER_NAME,
+                },
+            },
+        )
+        art = await asyncio.to_thread(
+            ensure_big_teacher_onnx,
+            force_fixture=force_fixture,
+            force_download=force_download,
+            progress=_prog,
+        )
+        await progress_q.put(None)
+        await drain_task
+
+        art_dict = art.as_dict()
+        level = "info" if art.live else "warn"
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "log",
+                "stage": "teach",
+                "payload": {
+                    "level": level,
+                    "message": (
+                        f"teacher pull: {art.label} cached={art.cached} "
+                        f"live={art.live} ok={art.ok} path={art.path}"
+                        + (f" err={art.error}" if art.error else "")
+                    ),
+                    "source": "teacher_pull",
+                    "teacher": art_dict,
+                },
+            },
+        )
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "decision",
+                "stage": "teach",
+                "payload": {
+                    "title": "Teacher artifact",
+                    "rationale": art.detail or art.label,
+                    "options_considered": [BIG_TEACHER_NAME],
+                    "chosen": art.label,
+                    "confidence": 1.0 if art.live else 0.0,
+                    "teacher": art_dict,
+                    "live": art.live,
+                    "cached": art.cached,
+                    "ok": art.ok,
+                    "label": art.label,
+                    "sha256": art.sha256,
+                },
+            },
+        )
+        # Offline / fixture is an honest gap, not a crash — job still completes.
+        if not art.live:
+            await _broadcast(
+                job_id,
+                {
+                    "id": str(uuid4()),
+                    "ts": _now(),
+                    "job_id": job_id,
+                    "kind": "warning",
+                    "stage": "teach",
+                    "payload": {
+                        "code": "TEACHER_NOT_LIVE",
+                        "message": (
+                            art.error
+                            or art.detail
+                            or f"fixture · {BIG_TEACHER_NAME} (live=false; no small-model fallback)"
+                        ),
+                        "recoverable": True,
+                        "label": art.label,
+                        "teacher": BIG_TEACHER_NAME,
+                    },
+                },
+            )
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "progress",
+                "stage": "teach",
+                "payload": {
+                    "fraction": 1.0,
+                    "detail": art.label,
+                    "teacher": BIG_TEACHER_NAME,
+                    "live": art.live,
+                    "cached": art.cached,
+                    "ok": art.ok,
+                    "label": art.label,
+                    "sha256": art.sha256,
+                },
+            },
+        )
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "stage",
+                "stage": "teach",
+                "payload": {
+                    "name": "teach",
+                    "status": "done",
+                    "detail": art.label,
+                    "teacher": art_dict,
+                    "label": art.label,
+                    "live": art.live,
+                    "ok": art.ok,
+                },
+            },
+        )
+        if job.status not in ("done", "failed"):
+            job.status = "done"
+    except Exception as exc:  # noqa: BLE001
+        try:
+            await progress_q.put(None)
+            await drain_task
+        except Exception:  # noqa: BLE001
+            drain_task.cancel()
+        job.status = "failed"
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "stage",
+                "stage": "teach",
+                "payload": {
+                    "name": "teach",
+                    "status": "failed",
+                    "detail": f"teacher pull failed: {exc}",
+                },
+            },
+        )
+        await _broadcast(
+            job_id,
+            {
+                "id": str(uuid4()),
+                "ts": _now(),
+                "job_id": job_id,
+                "kind": "log",
+                "stage": "teach",
+                "payload": {
+                    "level": "error",
+                    "message": f"teacher pull failed: {exc}",
+                    "source": "teacher_pull",
+                },
+            },
+        )
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     """Liveness + tinygrad-compatible device status (GPU or CPU; not 7090-locked)."""
@@ -1004,6 +1246,64 @@ async def get_teachers(
         "label": label or f"fixture · {BIG_TEACHER_NAME}",
         "teacher_artifact": artifact,
         "default_teacher": BIG_TEACHER_NAME,
+    }
+
+
+@app.post("/teachers/pull")
+async def pull_teachers(
+    background_tasks: BackgroundTasks,
+    body: TeacherPullRequest | None = None,
+) -> dict[str, Any]:
+    """Pull **big_driving_supercombo only** into ``artifacts/teachers/``.
+
+    Creates a ``teacher_pull`` job; progress streams on ``/ws/jobs/{id}``
+    (same bus as other jobs). Idempotent: skips re-download when cache
+    checksum is OK. Offline / failure → labeled fixture for the **big**
+    teacher (never small model, never pretend live).
+
+    Start training / ``train_all`` still calls ``ensure_big_teacher_onnx``
+    if the artifact is missing.
+    """
+    from distillery_teacher.download import BIG_TEACHER_NAME, cached_big_teacher_ok
+
+    body = body or TeacherPullRequest()
+    job_id = str(uuid4())
+    rec = JobRecord(
+        id=job_id,
+        kind="teacher_pull",
+        status="pending",
+        created_at=_now(),
+    )
+    _jobs[job_id] = rec
+    _subscribers[job_id] = []
+    background_tasks.add_task(
+        _run_teacher_pull_job,
+        job_id,
+        force_fixture=body.force_fixture,
+        force_download=body.force_download,
+    )
+    cached = None if body.force_fixture else cached_big_teacher_ok()
+    snapshot = cached.as_dict() if cached is not None else None
+    label = (
+        (snapshot or {}).get("label")
+        if snapshot
+        else (
+            f"fixture · {BIG_TEACHER_NAME}"
+            if body.force_fixture
+            else f"pulling · {BIG_TEACHER_NAME}"
+        )
+    )
+    return {
+        **_summary(rec).model_dump(),
+        "teacher": BIG_TEACHER_NAME,
+        "default_teacher": BIG_TEACHER_NAME,
+        "label": label,
+        "live": bool(snapshot.get("live")) if snapshot else False,
+        "cached": bool(snapshot.get("cached")) if snapshot else False,
+        "ok": bool(snapshot.get("ok")) if snapshot else None,
+        "teacher_artifact": snapshot,
+        "ws": f"/ws/jobs/{job_id}",
+        "events_url": f"/jobs/{job_id}/events",
     }
 
 

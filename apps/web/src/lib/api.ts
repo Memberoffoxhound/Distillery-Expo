@@ -860,6 +860,7 @@ export function startTeachJob(body: {
 export function startTrainJob(body: {
   source?: RouteSource;
   route_id?: string | null;
+  focus?: string | null;
 }): Promise<JobSummary> {
   return jsonFetch("/jobs/train", {
     method: "POST",
@@ -892,6 +893,31 @@ export function startEvalJob(body: {
   });
 }
 
+
+/** Focus coach stub — GET/POST /focus → .cache/focus_history.json */
+export interface FocusHistoryEntry {
+  id: string;
+  text: string;
+  ts: string;
+}
+
+export interface FocusState {
+  focus: string | null;
+  history: FocusHistoryEntry[];
+}
+
+export function fetchFocus(): Promise<FocusState> {
+  return jsonFetch("/focus");
+}
+
+export function submitFocus(focus: string, persist = true): Promise<FocusState> {
+  return jsonFetch("/focus", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ focus, persist }),
+  });
+}
+
 /** Simple-user ship path: teach→train→export→eval→gated flash. */
 export function startPipelineJob(body: {
   source?: RouteSource;
@@ -919,6 +945,7 @@ export async function startTrainAllJob(body: {
   teacher?: string | null;
   allow_toy?: boolean;
   force_fixture?: boolean;
+  focus?: string | null;
 } = {}): Promise<JobSummary> {
   const res = await fetch(`${API_BASE}/jobs/train_all`, {
     method: "POST",
@@ -929,6 +956,7 @@ export async function startTrainAllJob(body: {
       teacher: body.teacher ?? null,
       allow_toy: body.allow_toy ?? false,
       force_fixture: body.force_fixture ?? false,
+      focus: body.focus ?? null,
     }),
   });
   if (res.status === 409) {

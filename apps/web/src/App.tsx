@@ -7,15 +7,18 @@ import { IngestPane } from "./components/IngestPane";
 import { ShardPane } from "./components/ShardPane";
 import { TeacherPane } from "./components/TeacherPane";
 import { TrainPane } from "./components/TrainPane";
+import { FocusPane } from "./components/FocusPane";
 import { EvalPane } from "./components/EvalPane";
 import { FlashPane } from "./components/FlashPane";
 import { StatusChips } from "./components/StatusChips";
 import { StartTraining } from "./components/StartTraining";
 import { useJobStream } from "./hooks/useJobStream";
+import { useState } from "react";
 import "./styles/app.css";
 
 export default function App() {
   const job = useJobStream();
+  const [coachFocus, setCoachFocus] = useState<string | null>(null);
 
   const busy =
     job.status === "pending" ||
@@ -53,7 +56,12 @@ export default function App() {
           <StartTraining
             busy={busy}
             onStart={({ source, forceFixture, allowToy }) =>
-              job.startTrainAll({ source, forceFixture, allowToy })
+              job.startTrainAll({
+                source,
+                forceFixture,
+                allowToy,
+                focus: coachFocus,
+              })
             }
           />
         </div>
@@ -84,8 +92,11 @@ export default function App() {
         <Pane title="Teacher" tag="soft-labels" className="teacher">
           <TeacherPane events={job.events} />
         </Pane>
-        <Pane title="Train" tag="loss" className="train">
-          <TrainPane events={job.events} />
+        <Pane title="Train" tag="focus · loss" className="train">
+          <div className="train-stack">
+            <FocusPane onFocusChange={setCoachFocus} />
+            <TrainPane events={job.events} />
+          </div>
         </Pane>
         <Pane title="Thinking" tag="decision timeline" className="thinking">
           <ThinkingPane events={job.events} />

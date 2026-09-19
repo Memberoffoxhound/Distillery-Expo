@@ -37,7 +37,7 @@ def check_train_readiness(
 
     ``gaps`` codes (stable):
       - ``insufficient_hours`` — driving data below floor (and not toy-allowed)
-      - ``device_not_ready`` — tinygrad device probe not ready
+      - ``device_not_ready`` — torch device probe not ready
       - ``teacher_not_selected`` — no live comma-master big teacher / cache
     """
     cfg = cfg or load_student_config()
@@ -79,7 +79,7 @@ def check_train_readiness(
                 "code": "device_not_ready",
                 "message": (
                     f"Train device not ready "
-                    f"(tinygrad={device.get('tinygrad')}, "
+                    f"(torch={device.get('torch')}, "
                     f"kind={device.get('device_kind')}, "
                     f"name={device.get('device_name')}). "
                     f"{device.get('detail') or ''}"

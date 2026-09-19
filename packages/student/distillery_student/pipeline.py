@@ -105,7 +105,7 @@ async def run_train_pipeline(
         f"student={cfg.name} target={cfg.target} "
         f"soft_labels live={soft_live} source={soft_source} "
         f"hours={hours_info.get('hours')} known={hours_info.get('known')} "
-        f"device={device.get('device_name')} tinygrad={device.get('tinygrad')}"
+        f"device={device.get('device_name')} torch={device.get('torch')}"
     )
     await progress(0.05, "load soft labels + hours/device probe")
     await asyncio.sleep(tick)

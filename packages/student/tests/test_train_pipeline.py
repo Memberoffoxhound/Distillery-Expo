@@ -32,19 +32,23 @@ def test_config_io_compatible():
     assert cfg.min_train_hours >= 50
 
 
-def test_probe_train_device_keys_without_tinygrad():
+def test_probe_train_device_keys_without_torch():
     info = probe_train_device(force_fixture=False)
     for key in (
         "device_found",
         "device_ready",
         "device_kind",
         "device_name",
-        "tinygrad",
+        "torch",
     ):
         assert key in info
-    assert info["tinygrad"] in ("ok", "missing")
+    assert info["torch"] in ("ok", "missing")
     assert info["device_kind"] in ("gpu", "cpu", "unknown")
     assert info["live"] is False
+    if info["torch"] == "ok":
+        assert info["device_name"] in ("cuda", "mps", "cpu") or info["device_name"].startswith(
+            ("cuda:", "rocm")
+        )
 
 
 def test_probe_force_fixture_labeled():
@@ -52,9 +56,9 @@ def test_probe_force_fixture_labeled():
     info = probe_train_device(force_fixture=True)
     assert info.get("data_source") == "fixture"
     assert info["live"] is False
-    # Real probe: tinygrad ok|missing, never the old fake "fixture" device status
-    assert info["tinygrad"] in ("ok", "missing")
-    if info["tinygrad"] == "ok":
+    # Real probe: torch ok|missing, never the old fake "fixture" device status
+    assert info["torch"] in ("ok", "missing")
+    if info["torch"] == "ok":
         assert info["device_ready"] is True
         assert info["device_name"] != "fixture"
     else:
@@ -193,11 +197,11 @@ def test_check_train_readiness_reports_gaps(monkeypatch, tmp_path):
             "device_ready": True,
             "device_kind": "cpu",
             "device_name": "CPU",
-            "tinygrad": "ok",
+            "torch": "ok",
             "live": False,
-            "source": "tinygrad",
+            "source": "torch",
             "data_source": "fixture" if force_fixture else "live",
-            "detail": "tinygrad Device.DEFAULT=CPU kind=cpu; data path fixture / not licensed",
+            "detail": "torch device=cpu kind=cpu; data path fixture / not licensed",
         }
 
     monkeypatch.setattr(readiness_mod, "probe_train_device", _ready_cpu)
@@ -234,10 +238,10 @@ def test_check_train_readiness_device_not_ready_when_probe_fails(monkeypatch, tm
             "device_ready": False,
             "device_kind": "unknown",
             "device_name": "none",
-            "tinygrad": "missing",
+            "torch": "missing",
             "live": False,
             "source": "probe",
-            "detail": "monkeypatched missing tinygrad",
+            "detail": "monkeypatched missing torch",
         }
 
     monkeypatch.setattr(readiness_mod, "probe_train_device", _dead_device)
@@ -269,11 +273,11 @@ def test_check_train_readiness_missing_live_cache_is_gap(monkeypatch, tmp_path):
             "device_ready": True,
             "device_kind": "cpu",
             "device_name": "CPU",
-            "tinygrad": "ok",
+            "torch": "ok",
             "live": True,
-            "source": "tinygrad",
+            "source": "torch",
             "data_source": "live",
-            "detail": "tinygrad Device.DEFAULT=CPU",
+            "detail": "torch device=cpu kind=cpu",
         }
 
     monkeypatch.setattr(readiness_mod, "probe_train_device", _ready_cpu)

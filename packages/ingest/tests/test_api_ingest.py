@@ -92,21 +92,29 @@ def test_ingest_job_streams_samples(client):
     assert not any(e.get("stage") == "flash" for e in events)
 
 
-def test_health_tinygrad_shape(client):
+def test_health_torch_shape(client):
     r = client.get("/health")
     assert r.status_code == 200
     data = r.json()
     assert data["ok"] is True
     assert data["status"] == "ok"
-    assert data["tinygrad"] in ("ok", "missing", "fixture")
+    assert data["torch"] in ("ok", "missing")
     assert data["mode"] in ("live", "fixture")
     device = data["device"]
     assert "found" in device and "ready" in device
     assert "kind" in device and "name" in device and "backend" in device
-    # No tinygrad in this CI box → honest missing + fixture
-    if data["tinygrad"] == "missing":
+    # torch optional — honest missing + fixture when not installed
+    if data["torch"] == "missing":
         assert data["mode"] == "fixture"
         assert device["found"] is False
+        assert "torch: missing" in (data.get("detail") or "")
+    else:
+        assert device["found"] is True
+        name = str(device["name"])
+        assert name in ("cuda", "mps", "cpu") or name.startswith(("cuda:", "rocm"))
+    if data.get("tinygrad_note"):
+        label = str(data["tinygrad_note"].get("label", "")).lower()
+        assert "not train" in label
 
 
 def test_status_runtime(client):
@@ -114,7 +122,7 @@ def test_status_runtime(client):
     assert r.status_code == 200
     data = r.json()
     assert data["ok"] is True
-    assert data["tinygrad"] in ("ok", "missing", "fixture")
+    assert data["torch"] in ("ok", "missing")
     assert "ml_backends" in data
 
 

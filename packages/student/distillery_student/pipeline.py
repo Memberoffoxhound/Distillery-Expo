@@ -192,7 +192,7 @@ async def run_train_pipeline(
     )
 
     records = await asyncio.to_thread(run_distill_steps, steps=n_steps, lr=cfg.lr)
-    backend = "tinygrad" if records and records[0].get("backend") == 1.0 else "pure-python"
+    backend = "pytorch" if records and records[0].get("backend") == 1.0 else "pure-python"
     await log(f"Distill backend={backend} steps={n_steps}")
 
     final_loss = records[-1]["train_loss"] if records else 0.0

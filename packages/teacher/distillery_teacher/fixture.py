@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 from typing import Any
 
 from distillery_teacher.models import SoftLabelBatch
+from distillery_teacher.soft_label_torch import generate_soft_targets
 
 TEACHER_NAME = "Cinque/supercombo"
 
@@ -31,25 +31,18 @@ def load_fixture_manifest() -> dict[str, Any]:
     }
 
 
-def _pseudo_logits(n: int, dims: int = 8, seed: int = 0) -> list[list[float]]:
-    """Deterministic unit-ish vectors without numpy."""
-    out: list[list[float]] = []
-    for i in range(n):
-        row = []
-        for d in range(dims):
-            v = math.sin((seed + 1) * 0.17 + i * 0.31 + d * 0.47) * 0.5 + 0.5
-            row.append(round(v, 5))
-        out.append(row)
-    return out
-
-
 def build_fixture_batches(
     *,
     n_batches: int | None = None,
     samples_per_batch: int | None = None,
     route_id: str | None = None,
 ) -> list[SoftLabelBatch]:
-    """Build clearly labeled non-live soft-label batches."""
+    """Build clearly labeled non-live soft-label batches.
+
+    Soft-target *compute* uses PyTorch when installed (CPU OK via
+    ``distillery-expo[torch]``); labeling remains fixture / live=false.
+    Pure-python fallback when torch is missing.
+    """
     manifest = load_fixture_manifest()
     if n_batches is None:
         n_batches = int(manifest.get("batches") or 4)
@@ -59,6 +52,9 @@ def build_fixture_batches(
     for i in range(n_batches):
         batch_id = f"soft_{i:03d}"
         shard_id = f"shard_{i:03d}"
+        soft_targets, compute_backend = generate_soft_targets(
+            n_samples=samples_per_batch, seed=i
+        )
         batches.append(
             SoftLabelBatch(
                 batch_id=batch_id,
@@ -69,19 +65,18 @@ def build_fixture_batches(
                 device="fixture",
                 live=False,
                 source="fixture",
-                soft_targets={
-                    "kind": "fixture",
-                    "desire_logits": _pseudo_logits(samples_per_batch, 8, seed=i),
-                    "plan_lat": _pseudo_logits(samples_per_batch, 4, seed=i + 10),
-                    "plan_long": _pseudo_logits(samples_per_batch, 4, seed=i + 20),
-                },
+                soft_targets=soft_targets,
                 meta={
                     "live": False,
                     "source": "fixture",
                     "teacher": TEACHER_NAME,
                     "device": "fixture",
                     "label": "fixture",
-                    "reason": "last-resort fixture (no live cache / force_fixture / DISTILLERY_TEACHER_FIXTURE) — never claim live GPU",
+                    "compute_backend": compute_backend,
+                    "reason": (
+                        "last-resort fixture (no live cache / force_fixture / "
+                        "DISTILLERY_TEACHER_FIXTURE) — never claim live GPU"
+                    ),
                 },
             )
         )

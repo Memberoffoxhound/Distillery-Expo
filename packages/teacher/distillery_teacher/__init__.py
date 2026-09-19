@@ -17,6 +17,7 @@ from .download import (
 )
 from .config import TeacherConfig, load_teacher_config
 from .device import TeacherDeviceInfo, detect_teacher_device
+from .soft_label_torch import generate_soft_targets, probe_teach_device
 from .models import SoftLabelBatch
 from .pipeline import run_teach_pipeline
 
@@ -36,4 +37,6 @@ __all__ = [
     "consume_big_teacher_for_teach",
     "verify_cached_big_teacher",
     "TeacherChecksumError",
+    "generate_soft_targets",
+    "probe_teach_device",
 ]

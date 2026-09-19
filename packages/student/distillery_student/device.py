@@ -91,10 +91,33 @@ def _leftover_tinygrad_note() -> dict[str, Any] | None:
     }
 
 
+
+def resolve_torch_device():
+    """Map ``probe_train_device`` labels to a ``torch.device`` for train/teach.
+
+    Craig chip names: cuda | cuda:N | rocm | rocm:N | mps | cpu.
+    ROCm builds still use the torch.cuda device API. Returns None if torch missing.
+    """
+    status, name, _kind = _probe_torch_device()
+    if status != "ok":
+        return None
+    import torch
+
+    if name.startswith("rocm"):
+        # HIP/ROCm builds still use the cuda:N device API
+        idx = name.split(":", 1)[1] if ":" in name else "0"
+        return torch.device("cuda" if idx == "0" else f"cuda:{idx}")
+    if name.startswith("cuda"):
+        return torch.device(name)  # cuda or cuda:N
+    if name == "mps":
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 def probe_train_device(*, force_fixture: bool = False) -> dict[str, Any]:
     """Sync train-device probe for health / Craig /ready.
 
-    Keys: device_found, device_ready, device_kind, device_name, torch
+    Keys: backend=pytorch, device_found, device_ready, device_kind, device_name, torch
     ``torch`` ∈ {ok, missing}; ``device_kind`` ∈ {gpu, cpu, unknown}.
     ``device_name`` ∈ cuda | cuda:N | rocm | rocm:N | mps | cpu | none.
 
@@ -112,7 +135,9 @@ def probe_train_device(*, force_fixture: bool = False) -> dict[str, Any]:
             "device_ready": False,
             "device_kind": "unknown",
             "device_name": "none",
+            "backend": "pytorch",
             "torch": "missing",
+            "torch_ok": False,
             "live": False,
             "source": "probe",
             "data_source": "fixture" if fixture else "live",
@@ -136,7 +161,9 @@ def probe_train_device(*, force_fixture: bool = False) -> dict[str, Any]:
         "device_ready": ready,
         "device_kind": device_kind if found else "unknown",
         "device_name": device_name,
+        "backend": "pytorch",
         "torch": "ok",
+        "torch_ok": True,
         "live": False,  # ship-today: never claim licensed/live GPU teach
         "source": "torch",
         "data_source": "fixture" if fixture else "live",

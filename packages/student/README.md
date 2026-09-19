@@ -21,5 +21,5 @@ last-resort CI only (`DISTILLERY_STUDENT_FIXTURE=1` /
 `DISTILLERY_ALLOW_TOY_TRAIN=1`) — always `live=false` / not licensed.
 `DISTILLERY_INGEST_FIXTURE` does **not** force the student fixture path.
 
-Uses **pure Python** by default; optional `tinygrad` if installed (Graig owns train loop). `/health` train-device chip probes **torch** (`pip install 'distillery-expo[torch]'`).
+Train/teach compute uses **PyTorch** when installed (`pip install 'distillery-expo[torch]'`; CPU wheels OK). Pure-Python fallback when torch is missing. `/health` device chip uses Craig's `probe_train_device()` (cuda/rocm/mps/cpu).
 Writes `artifacts/student/student_checkpoint.json`.

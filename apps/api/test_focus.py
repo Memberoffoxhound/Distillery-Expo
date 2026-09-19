@@ -26,6 +26,7 @@ def test_focus_empty(client):
     data = r.json()
     assert data["focus"] is None
     assert data["history"] == []
+    assert data.get("coached") is None
 
 
 def test_focus_post_and_history(client):
@@ -97,3 +98,19 @@ def test_train_all_accepts_focus(client, monkeypatch):
     assert r.json()["kind"] == "train_all"
     stored = c.get("/focus").json()
     assert stored["focus"] == "stop signs"
+
+
+def test_focus_returns_coached(client):
+    c, _ = client
+    r = c.post("/focus", json={"focus": "stop lights, cut-ins"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["focus"] == "stop lights, cut-ins"
+    assert data["coached"] is not None
+    assert "stop_lights" in data["coached"]["tags"]
+    assert "cut_ins" in data["coached"]["tags"]
+    assert data["coached"]["sample_weight"] > 1.0
+    assert data["history"][0].get("coached", {}).get("tags")
+
+    g = c.get("/focus").json()
+    assert g["coached"]["tags"] == data["coached"]["tags"]

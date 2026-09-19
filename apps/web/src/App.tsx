@@ -44,7 +44,7 @@ export default function App() {
           <div className="brand-mark" />
           <div>
             <h1>Distillery Expo</h1>
-            <span>mici · tinygrad teacher · stock-modelV2 student</span>
+            <span>mici · teacher labels · stock-modelV2 student</span>
           </div>
         </div>
         <div className="header-actions">

@@ -109,7 +109,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .status-pill.failed { color: var(--danger); border-color: #8a3038; }
 
 
-/* System status chips (Train device + tinygrad) */
+/* System status chips (PyTorch + train device) */
 .status-chips {
   display: flex;
   gap: 0.35rem;

@@ -314,7 +314,7 @@ export function TeacherPane({ events }: { events: DistilleryEvent[] }) {
           body={
             label.tone === "fixture"
               ? "Fixture teacher path — soft-labels will be labeled offline, not comma master live. Pull live teacher when online."
-              : `Teacher soft-labels from comma master · ${BIG_TEACHER_NAME} appear here when teach events stream on whatever tinygrad device is ready. Expo is mission control — not a live GPU dashboard.`
+              : `Teacher soft-labels from comma master · ${BIG_TEACHER_NAME} appear here when teach events stream on whatever torch device is ready. Expo is mission control — not a live GPU dashboard.`
           }
           hint={`Teacher locked: comma master · ${BIG_TEACHER_NAME} when live · fixture · ${BIG_TEACHER_NAME} offline · no Chestnut`}
         />

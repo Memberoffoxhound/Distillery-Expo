@@ -91,7 +91,7 @@ export function TrainPane({ events }: { events: DistilleryEvent[] }) {
             <span className="v mono">{decision.chosen}</span>
           </div>
         ) : (
-          <div className="muted">stock-modelV2 I/O student · tinygrad</div>
+          <div className="muted">stock-modelV2 I/O student · torch</div>
         )}
       </div>
 

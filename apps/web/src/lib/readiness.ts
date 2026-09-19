@@ -58,7 +58,7 @@ const GAP_META: Record<
   device_not_ready: {
     id: "device",
     label: "Train device",
-    ask: "Install / expose tinygrad on a GPU or CPU device, then retry.",
+    ask: "Install / expose PyTorch on a CUDA, ROCm, MPS, or CPU device, then retry.",
   },
   teacher_not_selected: {
     id: "teacher",
@@ -182,7 +182,7 @@ export async function checkReadiness(opts?: {
       okCheck(
         "device",
         "Train device",
-        [name, kind].filter(Boolean).join(" · ") || "tinygrad device ready"
+        [name, kind].filter(Boolean).join(" · ") || "torch device ready"
       )
     );
   }

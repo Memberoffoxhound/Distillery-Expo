@@ -7,9 +7,9 @@ import {
 } from "../lib/api";
 
 /**
- * Calm mission-control chips: Train device + tinygrad.
- * Device-agnostic (GPU or CPU — never 7090-locked).
- * Never implies live GPU teach when backends are fixture.
+ * Calm mission-control chips: PyTorch readiness + train device.
+ * Device-agnostic (CUDA, ROCm, MPS, or CPU — never 7090-locked).
+ * These chips describe the torch runtime only; teacher backend is separate.
  */
 export function StatusChips() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -36,7 +36,7 @@ export function StatusChips() {
   const chips: StatusChipModel[] = healthToStatusChips(health, checking);
 
   return (
-    <div className="status-chips" aria-label="Train device and tinygrad status">
+    <div className="status-chips" aria-label="PyTorch train device status">
       {chips.map((c) => (
         <span
           key={c.key}

@@ -79,7 +79,7 @@ export interface DongleInfo {
   dongle_discovery_error?: string | null;
 }
 
-/** Nested train device from GET /health and GET /status/runtime. */
+/** Nested PyTorch train device from GET /health and GET /status/runtime. */
 export interface DeviceInfo {
   found?: boolean;
   ready?: boolean;
@@ -92,16 +92,17 @@ export interface DeviceInfo {
 }
 
 /**
- * GET /health + /status/runtime — tinygrad + device {found,ready,kind,name,backend}.
+ * GET /health + /status/runtime — PyTorch status plus device
+ * {found,ready,kind,name,backend}. GET /ready exposes the same probe fields.
  */
 export interface HealthResponse {
   ok?: boolean;
   status?: string;
   service?: string;
   mode?: string | null;
+  /** PyTorch import/runtime status: ok when usable, missing when unavailable. */
+  torch?: "ok" | "missing" | string | null;
   ml_backends?: Record<string, string>;
-  tinygrad?: string | null;
-  tinygrad_status?: string | null;
   /** Nested device object (live Craig shape) or legacy string. */
   device?: DeviceInfo | string | null;
   device_status?: string | null;
@@ -972,7 +973,7 @@ export function formatRouteLength(lengthS: number | null | undefined): string {
   return `${(lengthS / 3600).toFixed(2)} h`;
 }
 
-/** Derive calm chip labels from today’s /health (+ future fields). */
+/** Derive calm chip labels from today’s /health and /status/runtime fields. */
 export type ChipTone = "ok" | "warn" | "off" | "checking" | "fixture";
 
 export interface StatusChipModel {
@@ -988,64 +989,17 @@ function asStr(v: unknown): string | null {
   return null;
 }
 
-/**
- * Map /health → Device + tinygrad chips.
- * Never hard-code 7090-only readiness. Never imply live GPU teach when fixture.
- */
+/** Map the PyTorch health contract to calm Torch + Device chips. */
 export function healthToStatusChips(health: HealthResponse | null, checking: boolean): StatusChipModel[] {
   if (checking && !health) {
     return [
-      { key: "device", label: "Train device", value: "checking…", tone: "checking", title: "GET /health" },
-      { key: "tinygrad", label: "tinygrad", value: "checking…", tone: "checking", title: "GET /health" },
+      { key: "torch", label: "Torch", value: "checking…", tone: "checking", title: "PyTorch status: checking" },
+      { key: "device", label: "Device", value: "checking…", tone: "checking", title: "PyTorch train device: checking" },
     ];
   }
 
-  const backends = health?.ml_backends ?? {};
-  const teachBackend = asStr(backends.teach);
-  const trainBackend = asStr(backends.train);
-  const anyFixture =
-    teachBackend === "fixture" ||
-    trainBackend === "fixture" ||
-    asStr(health?.tinygrad) === "fixture" ||
-    asStr(health?.tinygrad_status) === "fixture" ||
-    asStr(health?.mode) === "fixture";
-
-  // --- tinygrad ---
-  let tgValue = "unknown";
-  let tgTone: ChipTone = "off";
-  const tgRaw =
-    asStr(health?.tinygrad_status) ??
-    asStr(health?.tinygrad) ??
-    null;
-
-  if (tgRaw) {
-    const low = tgRaw.toLowerCase();
-    if (low === "ok" || low === "ready" || low === "present") {
-      tgValue = "ok";
-      tgTone = "ok";
-    } else if (low === "missing" || low === "absent" || low === "error") {
-      tgValue = "missing";
-      tgTone = "warn";
-    } else if (low === "fixture") {
-      tgValue = "fixture";
-      tgTone = "fixture";
-    } else {
-      tgValue = tgRaw;
-      tgTone = "off";
-    }
-  } else if (teachBackend === "graig" || trainBackend === "graig") {
-    // Live package path present — tinygrad presumed available for Expo
-    tgValue = "ok";
-    tgTone = "ok";
-  } else if (anyFixture || teachBackend === "fixture" || trainBackend === "fixture") {
-    tgValue = "fixture";
-    tgTone = "fixture";
-  } else if (!health) {
-    tgValue = "unknown";
-    tgTone = "off";
-  }
-
-  // --- Train device: prefer nested device {found,ready,kind,name,backend} ---
+  // The merged API contract is torch: ok|missing plus nested device metadata.
+  const torchRaw = asStr(health?.torch)?.toLowerCase() ?? null;
   const nested =
     health?.device && typeof health.device === "object"
       ? (health.device as DeviceInfo)
@@ -1058,61 +1012,62 @@ export function healthToStatusChips(health: HealthResponse | null, checking: boo
     asStr(health?.gpu_name) ??
     asStr(health?.gpu) ??
     null;
-  const deviceKind = asStr(nested?.kind);
-  const deviceReady = nested?.ready === true;
-  const deviceFound = nested?.found === true;
-  const modeFixture = asStr(health?.mode) === "fixture";
 
-  let devValue = "unknown";
-  let devTone: ChipTone = "off";
-  let devTitle = "Train device — tinygrad-compatible (GPU or CPU). Not 7090-locked.";
+  const torchMissing = torchRaw === "missing";
+  const torchReady = torchRaw === "ok";
+  const torchValue = torchMissing ? "missing" : torchReady ? "ready" : "unknown";
+  const torchTone: ChipTone = torchMissing ? "warn" : torchReady ? "ok" : "off";
+  const torchTitle = torchMissing
+    ? "Torch missing — install the optional PyTorch dependency"
+    : torchReady
+      ? "Torch ready"
+      : "Torch status unavailable";
 
-  if (modeFixture || (anyFixture && !deviceFound && !deviceName)) {
-    devValue = "fixture";
-    devTone = "fixture";
-    devTitle = "Fixture / offline mode — not a live train-device claim.";
-  } else if (nested) {
-    const kindBit = deviceKind ? `${deviceKind}` : null;
-    const nameBit = deviceName;
-    if (deviceReady) {
-      const label = [nameBit, kindBit].filter(Boolean).join(" · ");
-      devValue = label ? `${label} · ready` : "ready";
-      devTone = "ok";
-    } else if (deviceFound) {
-      devValue = nameBit ? `${nameBit} · not ready` : "found · not ready";
-      devTone = "warn";
-    } else {
-      devValue = "missing";
-      devTone = "warn";
-    }
-    if (asStr(nested.backend)) {
-      devTitle = `backend=${nested.backend}; kind=${deviceKind ?? "?"}`;
-    }
-  } else if (deviceName) {
-    devValue = deviceName;
-    devTone = "ok";
-  } else if (!health) {
-    devValue = "unknown";
-    devTone = "off";
-  } else {
-    devValue = "unknown";
-    devTone = "off";
+  function displayDevice(name: string | null): string | null {
+    if (!name) return null;
+    const base = name.toLowerCase().split(":", 1)[0];
+    if (base === "cuda") return "CUDA";
+    if (base === "rocm") return "ROCm";
+    if (base === "mps") return "MPS";
+    if (base === "cpu") return "CPU";
+    return name;
   }
+
+  const deviceLabel = displayDevice(deviceName);
+  const deviceFound = nested?.found === true || Boolean(deviceName);
+  const deviceReady = nested?.ready === true || (torchReady && !nested);
+  let deviceValue = "unknown";
+  let deviceTone: ChipTone = "off";
+  if (torchMissing || (nested && !deviceFound)) {
+    deviceValue = "missing";
+    deviceTone = "warn";
+  } else if (deviceReady && deviceLabel) {
+    deviceValue = deviceLabel;
+    deviceTone = "ok";
+  } else if (deviceFound && deviceLabel) {
+    deviceValue = "not ready";
+    deviceTone = "warn";
+  }
+  const deviceTitle = deviceValue === "unknown"
+    ? "PyTorch train device unavailable"
+    : deviceValue === "missing"
+      ? "PyTorch train device missing"
+      : `${deviceValue} train device`;
 
   return [
     {
-      key: "device",
-      label: "Train device",
-      value: devValue,
-      tone: devTone,
-      title: devTitle,
+      key: "torch",
+      label: "Torch",
+      value: torchValue,
+      tone: torchTone,
+      title: torchTitle,
     },
     {
-      key: "tinygrad",
-      label: "tinygrad",
-      value: tgValue,
-      tone: tgTone,
-      title: "tinygrad runtime — ok / missing / fixture",
+      key: "device",
+      label: "Device",
+      value: deviceValue,
+      tone: deviceTone,
+      title: deviceTitle,
     },
   ];
 }

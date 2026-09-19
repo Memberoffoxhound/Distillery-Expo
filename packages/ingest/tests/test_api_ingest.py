@@ -418,3 +418,122 @@ def test_routes_connect_uses_saved_dongle_id(monkeypatch, tmp_path):
     assert len(data["routes"]) == 1
     assert data["routes"][0]["dongle_id"] == "deadbeefcafebabe"
     assert data["routes"][0]["meta"].get("fixture") is not True
+
+
+
+def test_routes_public_no_jwt_honest(monkeypatch, tmp_path):
+    """GET /routes?source=public with no JWT → honest empty, never fixture."""
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+
+    from distillery_ingest.config import IngestConfig
+
+    def _load(**_kw):
+        return IngestConfig(
+            dongle_id="",
+            connect_jwt=None,
+            force_fixture=False,
+            repo_root=tmp_path,
+        )
+
+    monkeypatch.setattr("api.main.load_ingest_config", _load)
+    monkeypatch.setattr("distillery_ingest.resolve.load_ingest_config", _load)
+
+    from api.main import app
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as c:
+        r = c.get("/routes", params={"source": "public", "limit": 10})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["source"] == "public"
+    assert data["routes"] == []
+    assert data.get("empty_reason") == "connect_not_configured"
+
+
+def test_routes_public_jwt_ok_list_or_empty(monkeypatch, tmp_path):
+    """JWT OK → real public list (mocked) — never fixture."""
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+
+    from distillery_ingest.config import IngestConfig
+    from distillery_ingest.models import RouteInfo
+    from distillery_ingest.sources.public import PublicConnectRouteSource
+
+    def _load(**_kw):
+        return IngestConfig(
+            dongle_id="",
+            connect_jwt="testjwtTOKEN12345678",
+            force_fixture=False,
+            repo_root=tmp_path,
+        )
+
+    monkeypatch.setattr("api.main.load_ingest_config", _load)
+    monkeypatch.setattr("distillery_ingest.resolve.load_ingest_config", _load)
+
+    def _list(self, *, limit=20):
+        return [
+            RouteInfo(
+                route_id="deadbeefcafebabe|2024-02-02--10-00-00",
+                dongle_id="deadbeefcafebabe",
+                display_name="public-hit",
+                source="public",
+                segment_count=3,
+                meta={"label": "public", "fixture": False, "shared": True},
+            )
+        ]
+
+    monkeypatch.setattr(PublicConnectRouteSource, "list_routes", _list)
+
+    from api.main import app
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as c:
+        r = c.get("/routes", params={"source": "public", "limit": 5})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["source"] == "public"
+    assert len(data["routes"]) == 1
+    assert data["routes"][0]["source"] == "public"
+    assert data["routes"][0]["meta"].get("fixture") is not True
+
+
+def test_routes_demo_dongle_env_ignored(monkeypatch, tmp_path):
+    """Demo id in env/cache must not become Connect query target."""
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+    monkeypatch.setenv("DISTILLERY_DONGLE_ID", "3e2de7ed673817c2")
+    monkeypatch.setenv("COMMA_JWT", "testjwtTOKEN12345678")
+    cache = tmp_path / "dongle_id"
+    cache.write_text("3e2de7ed673817c2\n", encoding="utf-8")
+    monkeypatch.setattr("distillery_ingest.config._DONGLE_CACHE", cache)
+    monkeypatch.setattr("distillery_ingest.discover._DONGLE_CACHE", cache)
+    monkeypatch.setattr("distillery_ingest.discover._JWT_CACHE", tmp_path / "connect_jwt")
+    monkeypatch.setattr("distillery_ingest.discover._SSH_CACHE", tmp_path / "ssh.json")
+
+    from distillery_ingest.config import IngestConfig, load_ingest_config as real_load
+    from distillery_ingest.sources.connect import ConnectRouteSource
+
+    queried: list[str] = []
+
+    def _list(self, *, limit=20):
+        queried.append(self.cfg.dongle_id)
+        return []
+
+    monkeypatch.setattr(ConnectRouteSource, "list_routes", _list)
+
+    # Ensure API uses the same cache-patched loader
+    def _load(config_path=None):
+        return real_load(config_path)
+
+    monkeypatch.setattr("api.main.load_ingest_config", _load)
+
+    from api.main import app
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as c:
+        r = c.get("/routes", params={"source": "connect", "limit": 5})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["source"] == "connect"
+    assert data["routes"] == []
+    assert data.get("empty_reason") == "dongle_id_required"
+    assert queried == []
+    assert data.get("dongle_id") in (None, "")

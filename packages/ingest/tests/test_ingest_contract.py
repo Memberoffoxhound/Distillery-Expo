@@ -241,3 +241,150 @@ def test_set_dongle_then_connect_uses_id(monkeypatch, tmp_path):
     src, routes = result
     assert src.name == "connect"
     assert routes[0].dongle_id == "1122334455667788"
+
+
+
+def test_demo_dongle_cache_ignored(monkeypatch, tmp_path):
+    """Leftover demo id in .cache → treat as unset; never configure Connect around it."""
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+    monkeypatch.setenv("COMMA_JWT", "testjwtTOKEN12345678")
+    cache = tmp_path / "dongle_id"
+    cache.write_text("3e2de7ed673817c2\n", encoding="utf-8")
+    monkeypatch.setattr("distillery_ingest.config._DONGLE_CACHE", cache)
+    monkeypatch.setattr("distillery_ingest.discover._DONGLE_CACHE", cache)
+
+    from distillery_ingest.config import DEMO_DONGLE_ID, load_ingest_config
+    from distillery_ingest.discover import ensure_dongle_from_cache
+    from distillery_ingest.resolve import list_routes
+    from distillery_ingest.sources.connect import ConnectRouteSource
+
+    queried: list[str] = []
+
+    def _list(self, *, limit=20):
+        queried.append(self.cfg.dongle_id)
+        raise AssertionError("Connect must not be queried with demo dongle")
+
+    monkeypatch.setattr(ConnectRouteSource, "list_routes", _list)
+
+    assert ensure_dongle_from_cache() is None
+    cfg = load_ingest_config()
+    assert cfg.dongle_id == ""
+    assert cfg.dongle_configured is False
+    assert not cache.is_file() or cache.read_text(encoding="utf-8").strip() != DEMO_DONGLE_ID
+
+    result = list_routes(cfg, prefer="connect", limit=5)
+    assert result.source.name == "connect"
+    assert result.routes == []
+    assert result.empty_reason == "dongle_id_required"
+    assert queried == []
+
+
+def test_set_dongle_rejects_demo_id(monkeypatch, tmp_path):
+    monkeypatch.setattr("distillery_ingest.discover._DONGLE_CACHE", tmp_path / "dongle_id")
+    monkeypatch.setattr("distillery_ingest.config._DONGLE_CACHE", tmp_path / "dongle_id")
+    monkeypatch.delenv("DISTILLERY_DONGLE_ID", raising=False)
+
+    from distillery_ingest.config import DEMO_DONGLE_ID
+    from distillery_ingest.discover import set_dongle_id
+
+    with pytest.raises(ValueError, match="fixture/demo"):
+        set_dongle_id(DEMO_DONGLE_ID, persist=True)
+
+
+def test_public_no_jwt_honest_empty(monkeypatch, tmp_path):
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+
+    from distillery_ingest.config import IngestConfig
+    from distillery_ingest.resolve import list_routes
+    from distillery_ingest.sources.public import PublicConnectRouteSource
+
+    cfg = IngestConfig(dongle_id="", connect_jwt=None, force_fixture=False, repo_root=tmp_path)
+    result = list_routes(cfg, prefer="public", limit=5)
+    assert result.source.name == "public"
+    assert result.routes == []
+    assert result.empty_reason == "connect_not_configured"
+    assert "Connect not configured" in (result.message or "")
+    assert isinstance(result.source, PublicConnectRouteSource)
+
+
+def test_public_jwt_ok_real_list_or_honest_empty(monkeypatch, tmp_path):
+    """JWT present → real public list from me/devices, or honest empty_public (no fixture)."""
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+
+    from distillery_ingest.config import IngestConfig
+    from distillery_ingest.models import RouteInfo
+    from distillery_ingest.resolve import list_routes
+    from distillery_ingest.sources.public import PublicConnectRouteSource
+
+    cfg = IngestConfig(
+        dongle_id="",
+        connect_jwt="testjwtTOKEN12345678",
+        force_fixture=False,
+        repo_root=tmp_path,
+    )
+
+    def _list_shared(self, *, limit=20):
+        return [
+            RouteInfo(
+                route_id="aabbccddeeff0011|2024-06-01--12-00-00",
+                dongle_id="aabbccddeeff0011",
+                display_name="shared-drive",
+                source="public",
+                segment_count=2,
+                meta={"label": "public", "fixture": False, "shared": True},
+            )
+        ]
+
+    monkeypatch.setattr(PublicConnectRouteSource, "list_routes", _list_shared)
+    result = list_routes(cfg, prefer="public", limit=5)
+    assert result.source.name == "public"
+    assert len(result.routes) == 1
+    assert result.routes[0].source == "public"
+    assert result.routes[0].meta.get("fixture") is not True
+    assert result.empty_reason is None
+
+    monkeypatch.setattr(PublicConnectRouteSource, "list_routes", lambda self, *, limit=20: [])
+    empty = list_routes(cfg, prefer="public", limit=5)
+    assert empty.source.name == "public"
+    assert empty.routes == []
+    assert empty.empty_reason == "empty_public"
+    assert "0 public" in (empty.message or "")
+
+
+def test_public_skips_demo_dongle_device(monkeypatch, tmp_path):
+    """Public listing must never query the demo dongle even if it appears in me/devices."""
+    monkeypatch.delenv("DISTILLERY_INGEST_FIXTURE", raising=False)
+
+    from distillery_ingest.config import DEMO_DONGLE_ID, IngestConfig
+    from distillery_ingest.sources.public import PublicConnectRouteSource
+
+    cfg = IngestConfig(connect_jwt="jwt", force_fixture=False, repo_root=tmp_path)
+    src = PublicConnectRouteSource(cfg)
+    queried: list[str] = []
+
+    def _devices(self):
+        return [
+            {"dongle_id": DEMO_DONGLE_ID, "is_owner": False, "alias": "demo"},
+            {"dongle_id": "aabbccddeeff0011", "is_owner": False, "alias": "friend"},
+        ]
+
+    def _rows(self, dongle, *, limit):
+        queried.append(dongle)
+        return [
+            {
+                "fullname": f"{dongle}|2024-01-01--00-00-00",
+                "dongle_id": dongle,
+                "is_public": False,
+                "maxqlog": 1,
+            }
+        ]
+
+    monkeypatch.setattr(PublicConnectRouteSource, "_list_devices", _devices)
+    monkeypatch.setattr(PublicConnectRouteSource, "_device_route_rows", _rows)
+    routes = src.list_routes(limit=10)
+    assert DEMO_DONGLE_ID not in queried
+    assert queried == ["aabbccddeeff0011"]
+    assert len(routes) == 1
+    assert routes[0].dongle_id == "aabbccddeeff0011"
+    assert routes[0].source == "public"

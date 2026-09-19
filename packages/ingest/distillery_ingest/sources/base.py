@@ -7,7 +7,7 @@ from typing import Literal
 
 from distillery_ingest.models import RouteInfo
 
-SourceName = Literal["connect", "ssh", "fixture"]
+SourceName = Literal["connect", "ssh", "public", "fixture"]
 
 
 class RouteSource(ABC):

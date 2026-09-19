@@ -1,4 +1,4 @@
-"""Pick Connect → SSH → fixture; expose list_routes for API/CLI."""
+"""Pick Connect / public / SSH / fixture; expose list_routes for API/CLI."""
 
 from __future__ import annotations
 
@@ -11,15 +11,16 @@ from distillery_ingest.models import RouteInfo
 from distillery_ingest.sources.base import RouteSource
 from distillery_ingest.sources.connect import ConnectRouteSource
 from distillery_ingest.sources.fixture import FixtureRouteSource
+from distillery_ingest.sources.public import PublicConnectRouteSource
 from distillery_ingest.sources.ssh import REALDATA, SshRouteSource
 
 log = logging.getLogger(__name__)
 
-SourcePreference = Literal["auto", "connect", "ssh", "fixture"]
+SourcePreference = Literal["auto", "connect", "public", "ssh", "fixture"]
 ConnectScope = Literal["mine", "public"]
 
-# Explicit prefer=ssh|connect must never silently swap to fixture.
-_EXPLICIT_LIVE = frozenset({"ssh", "connect"})
+# Explicit prefer=ssh|connect|public must never silently swap to fixture.
+_EXPLICIT_LIVE = frozenset({"ssh", "connect", "public"})
 
 
 @dataclass
@@ -54,17 +55,22 @@ def resolve_source(
         return FixtureRouteSource(cfg)
 
     connect = ConnectRouteSource(cfg)
+    public = PublicConnectRouteSource(cfg)
     ssh = SshRouteSource(cfg)
     fixture = FixtureRouteSource(cfg)
 
     if prefer == "connect":
         return connect
+    if prefer == "public":
+        return public
     if prefer == "ssh":
         return ssh
 
-    # auto: Connect → SSH → labeled fixture (last resort)
+    # auto: My Connect → public/shared → SSH → labeled fixture (last resort)
     if connect.available():
         return connect
+    if public.available():
+        return public
     if ssh.available():
         return ssh
     return fixture
@@ -83,6 +89,9 @@ def _ssh_empty_message(cfg: IngestConfig, *, error: str | None = None) -> tuple[
 
 def _connect_empty_message(cfg: IngestConfig, *, error: str | None = None) -> tuple[str, str]:
     if error:
+        err_l = error.lower()
+        if "401" in err_l or "unauthorized" in err_l or "403" in err_l:
+            return f"Connect unauthorized · {error}", "connect_unauthorized"
         return f"Connect error · {error}", "connect_error"
     if not (cfg.dongle_id or "").strip():
         return "Dongle ID required · set via GUI Save", "dongle_id_required"
@@ -92,10 +101,11 @@ def _connect_empty_message(cfg: IngestConfig, *, error: str | None = None) -> tu
 
 
 def _public_empty_message(cfg: IngestConfig, *, error: str | None = None) -> tuple[str, str]:
+    """Honest empty for Public routes picker (JWT / 401 / no shared hits)."""
     if error:
-        low = error.lower()
-        if "401" in low or "403" in low or "unauthorized" in low or "forbidden" in low:
-            return f"Connect auth failed · {error}", "connect_unauthorized"
+        err_l = error.lower()
+        if "401" in err_l or "unauthorized" in err_l or "403" in err_l or "forbidden" in err_l:
+            return f"Connect unauthorized · {error}", "connect_unauthorized"
         return f"Connect error · {error}", "connect_error"
     if not cfg.connect_jwt:
         return "Connect not configured · paste JWT then Save", "connect_not_configured"
@@ -114,6 +124,7 @@ def list_routes(
     Explicit prefer=ssh|connect: never silently fall back to fixture on empty
     or error — return honest empty + message/empty_reason/error.
     Missing dongle on Connect/SSH → dongle_id_required (not fixture dongle).
+    prefer=public: JWT only; 401 / no hits → honest empty (never fixture).
     prefer=auto (and missing creds): still falls back to labeled fixture.
 
     scope=public (with prefer=connect|auto): list shared/public Connect drives
@@ -160,8 +171,16 @@ def list_routes(
     source = resolve_source(cfg, prefer=prefer)
     explicit = prefer in _EXPLICIT_LIVE and not cfg.force_fixture
 
-    # Honest gap before hitting Connect/SSH when dongle unset
-    if explicit and not (cfg.dongle_id or "").strip():
+    # Honest gaps before hitting live backends
+    if explicit and prefer == "public" and not cfg.connect_jwt:
+        msg, reason = _public_empty_message(cfg)
+        return ListRoutesResult(
+            source=source,
+            routes=[],
+            message=msg,
+            empty_reason=reason,
+        )
+    if explicit and prefer in ("ssh", "connect") and not (cfg.dongle_id or "").strip():
         if prefer == "ssh":
             msg, reason = _ssh_empty_message(cfg)
         else:
@@ -181,6 +200,8 @@ def list_routes(
             err = str(exc).strip() or type(exc).__name__
             if prefer == "ssh":
                 msg, reason = _ssh_empty_message(cfg, error=err)
+            elif prefer == "public":
+                msg, reason = _public_empty_message(cfg, error=err)
             else:
                 msg, reason = _connect_empty_message(cfg, error=err)
             return ListRoutesResult(
@@ -201,6 +222,8 @@ def list_routes(
     if explicit:
         if prefer == "ssh":
             msg, reason = _ssh_empty_message(cfg)
+        elif prefer == "public":
+            msg, reason = _public_empty_message(cfg)
         else:
             msg, reason = _connect_empty_message(cfg)
         return ListRoutesResult(
@@ -228,8 +251,10 @@ def get_route(
     cfg = cfg or load_ingest_config()
     source = resolve_source(cfg, prefer=prefer)
     explicit = prefer in _EXPLICIT_LIVE and not cfg.force_fixture
-    if explicit and not (cfg.dongle_id or "").strip():
+    if explicit and prefer in ("ssh", "connect") and not (cfg.dongle_id or "").strip():
         raise LookupError("dongle_id required · set via GUI Save")
+    if explicit and prefer == "public" and not cfg.connect_jwt:
+        raise LookupError("Connect JWT required · paste JWT then Save")
     try:
         route = source.get_route(route_id)
         if route is not None:

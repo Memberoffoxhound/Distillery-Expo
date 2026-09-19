@@ -108,7 +108,7 @@
     ]
   },
   "public_routes": {
-    "request": "GET /routes?source=connect&scope=public",
+    "request": "GET /routes?source=public (preferred) or GET /routes?source=connect&scope=public",
     "needs": "COMMA_JWT / CONNECT_JWT only (no local dongle)",
     "fetch": "Connect GET /v1/me/devices then per-device /v1/devices/{id}/routes; include shared (is_owner=false) + is_public=true",
     "never": "query demo dongle 3e2de7ed673817c2",
@@ -118,5 +118,11 @@
       "no_hits": "empty_reason=empty_public"
     },
     "ui": "Ingest segmented picker: Public routes | My Connect | SSH/ADB"
-  }
+  },
+  "demo_dongle_ban": {
+    "id": "3e2de7ed673817c2",
+    "rule": "Hard-banned from env/.cache default and Connect/SSH query targets; leftover cache cleared. POST /dongle rejects this id.",
+    "see_also": "docs/routes-picker-contract.json"
+  },
+  "related": "docs/routes-picker-contract.json \u2014 Public routes | My Connect | SSH/ADB"
 }

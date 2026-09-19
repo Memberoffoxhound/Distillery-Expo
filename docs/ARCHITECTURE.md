@@ -49,7 +49,7 @@ prefer=auto:  Connect (COMMA_JWT) → SSH (MICI_SSH_HOST) → fixture
 - **SSH** — lists `/data/media/0/realdata` on mici; maps hevc filenames → road/wide/driver.
 - **Fixture** — offline / CI; `packages/ingest/fixtures/sample_route.json` is Connect-shaped and labeled `meta.fixture` / `meta.label=fixture`. Samples keep `placeholder=true`.
 
-Dongle resolved from `DISTILLERY_DONGLE_ID`, `.cache/dongle_id` (POST `/dongle` Save or ADB/SSH auto-hydrate), or optional YAML — **empty until set** (no demo default). GET `/dongle` may include `suggested_dongle_id` / `discovered_from` from `/data/params/d/DongleId`. Fixture routes may still use labeled sample id `3e2de7ed673817c2`. See `docs/dongle-id-contract.json`. Public/shared Connect browse: `GET /routes?source=connect&scope=public` (JWT → `/v1/me/devices` + shared/public routes; never demo dongle).
+Routes picker: `GET /routes?source=public|connect|ssh` (see `docs/routes-picker-contract.json`). Also `GET /routes?source=connect&scope=public` for shared/public Connect browse (JWT → `/v1/me/devices`; never demo dongle). Dongle resolved from `DISTILLERY_DONGLE_ID`, `.cache/dongle_id` (POST `/dongle` Save or ADB/SSH auto-hydrate), or optional YAML — **empty until set** (no demo default). GET `/dongle` may include `suggested_dongle_id` / `discovered_from` from `/data/params/d/DongleId`. Fixture routes may still use labeled sample id `3e2de7ed673817c2`. See `docs/dongle-id-contract.json`.
 
 ### API (simple-user path)
 

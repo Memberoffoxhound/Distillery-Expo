@@ -9,6 +9,7 @@ from .hours import (
     hours_meet_floor,
     toy_train_allowed,
 )
+from .focus import coach_focus, focus_for_train
 from .pipeline import run_train_pipeline
 from .readiness import check_train_readiness
 
@@ -24,4 +25,6 @@ __all__ = [
     "InsufficientHoursError",
     "DEFAULT_MIN_TRAIN_HOURS",
     "check_train_readiness",
+    "coach_focus",
+    "focus_for_train",
 ]

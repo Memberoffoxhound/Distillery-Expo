@@ -43,6 +43,7 @@ async def run_teach_pipeline(
     tick: float = 0.12,
     write_files: bool = True,
     n_batches: int = 4,
+    focus: str | None = None,
 ) -> list[SoftLabelBatch]:
     """Produce soft labels; prefer live big_driving_supercombo cache.
 
@@ -95,6 +96,9 @@ async def run_teach_pipeline(
         f"teacher={cfg.name} prefer={prefer} route_id={route_id or 'auto'} "
         f"force_fixture={cfg.force_fixture}"
     )
+    if focus:
+        await log(f"teach focus={focus!r} (sample emphasis hint for soft-labels)")
+
     await progress(0.05, "detect teacher device")
     await asyncio.sleep(tick)
 

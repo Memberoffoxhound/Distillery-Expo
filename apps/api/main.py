@@ -174,7 +174,7 @@ class DongleIdRequest(BaseModel):
 
 
 class FocusRequest(BaseModel):
-    """Plain-English training focus — coach contract stub for Graig."""
+    """Plain-English training focus — coach maps to tags/weights for train."""
     focus: str = Field(..., min_length=1)
     persist: bool = True
 
@@ -843,7 +843,7 @@ async def _run_train_all_job(
             },
         )
         await _call_stage(
-            resolve_teach(), job_id, emit, route_id=rid, prefer=prefer_ml, tick=0.06
+            resolve_teach(), job_id, emit, route_id=rid, prefer=prefer_ml, tick=0.06, focus=focus
         )
         await _call_stage(
             resolve_train(),
@@ -1247,13 +1247,13 @@ async def post_dongle(body: DongleIdRequest) -> dict[str, Any]:
 
 @app.get("/focus")
 async def get_focus() -> dict[str, Any]:
-    """Current training focus + history (newest first). Coach stub for Graig."""
+    """Current training focus + coached structure + history (newest first)."""
     return load_focus()
 
 
 @app.post("/focus")
 async def post_focus(body: FocusRequest) -> dict[str, Any]:
-    """Store plain-English focus + history in .cache/focus_history.json."""
+    """Coach plain-English focus → tags/weights; persist history + coached."""
     try:
         return save_focus(body.focus, persist=body.persist)
     except ValueError as exc:

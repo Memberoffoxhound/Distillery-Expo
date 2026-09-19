@@ -23,6 +23,7 @@ from distillery_student.hours import (
     estimate_driving_hours,
     hours_meet_floor,
 )
+from distillery_student.focus import coach_focus, focus_for_train
 from distillery_student.train_loop import (
     load_soft_label_summary,
     run_distill_steps,
@@ -44,11 +45,17 @@ async def run_train_pipeline(
     tick: float = 0.12,
     write_files: bool = True,
     steps: int | None = None,
+    focus: str | None = None,
+    coached: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Distill loop. Refuses below hours floor unless toy override (live=false)."""
     cfg = cfg or load_student_config()
     stage = StageName.train
     n_steps = steps if steps is not None else cfg.steps
+
+    focus_spec = focus_for_train(text=focus, coached=coached)
+    if focus_spec is None and focus:
+        focus_spec = coach_focus(focus)
 
     async def log(msg: str, level: str = "info") -> None:
         await _emit(
@@ -191,7 +198,41 @@ async def run_train_pipeline(
         ),
     )
 
-    records = await asyncio.to_thread(run_distill_steps, steps=n_steps, lr=cfg.lr)
+    if focus_spec:
+        await log(
+            f"Focus coach tags={focus_spec.get('tags')} "
+            f"sample_weight={focus_spec.get('sample_weight')} "
+            f"loss_weights={focus_spec.get('loss_weights')}"
+        )
+        await _emit(
+            emit,
+            make_event(
+                job_id,
+                EventKind.decision,
+                DecisionPayload(
+                    title="Training focus",
+                    rationale=(
+                        "Plain-English focus coached into tags/loss/sample weights "
+                        "for this distill pass (no second train stack)."
+                    ),
+                    options_considered=[
+                        "uniform distill (no focus)",
+                        "focus-weighted distill (tags + loss emphasis)",
+                    ],
+                    chosen="focus-weighted distill (tags + loss emphasis)",
+                    confidence=0.85,
+                ),
+                stage=stage,
+            ),
+        )
+
+    records = await asyncio.to_thread(
+        run_distill_steps,
+        steps=n_steps,
+        lr=cfg.lr,
+        focus=focus,
+        coached=focus_spec,
+    )
     backend = "pytorch" if records and records[0].get("backend") == 1.0 else "pure-python"
     await log(f"Distill backend={backend} steps={n_steps}")
 
@@ -230,6 +271,8 @@ async def run_train_pipeline(
         "hours": hours_info,
         "hours_gate": gate,
         "device": device,
+        "focus": focus_spec.get("text") if focus_spec else focus,
+        "coached": focus_spec,
         "checkpoint": None,
     }
 
@@ -249,6 +292,8 @@ async def run_train_pipeline(
                 "hours": hours_info,
                 "hours_gate": gate,
                 "device": device,
+                "focus": focus_spec.get("text") if focus_spec else focus,
+                "coached": focus_spec,
             },
         )
         result["checkpoint"] = str(ckpt)

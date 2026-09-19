@@ -11,7 +11,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from distillery_ingest.config import IngestConfig, load_ingest_config, _REPO_ROOT
+from distillery_ingest.config import (
+    IngestConfig,
+    is_banned_demo_dongle,
+    load_ingest_config,
+    sanitize_dongle_id,
+    _REPO_ROOT,
+)
 
 log = logging.getLogger(__name__)
 
@@ -141,29 +147,53 @@ def _jwt_source() -> str | None:
 
 
 def ensure_dongle_from_cache() -> str | None:
-    """If DISTILLERY_DONGLE_ID unset, load from .cache/dongle_id into process env."""
-    existing = (os.environ.get("DISTILLERY_DONGLE_ID") or "").strip()
+    """If DISTILLERY_DONGLE_ID unset, load from .cache/dongle_id into process env.
+
+    Stale demo id in env/cache is cleared — never auto-query.
+    """
+    existing = os.environ.get("DISTILLERY_DONGLE_ID", "").strip()
     if existing:
+        if is_banned_demo_dongle(existing):
+            os.environ.pop("DISTILLERY_DONGLE_ID", None)
+            if _DONGLE_CACHE.is_file():
+                try:
+                    _DONGLE_CACHE.unlink()
+                except OSError:
+                    pass
+            return None
         return existing
-    cache = _DONGLE_CACHE
-    if not cache.is_file():
+    if not _DONGLE_CACHE.is_file():
         return None
     try:
-        token = cache.read_text(encoding="utf-8").strip()
+        cached = _DONGLE_CACHE.read_text(encoding="utf-8").strip()
     except OSError as exc:
         log.warning("failed reading dongle cache: %s", exc)
         return None
-    if not token:
+    if not cached:
         return None
-    os.environ["DISTILLERY_DONGLE_ID"] = token
-    return token
+    if is_banned_demo_dongle(cached):
+        try:
+            _DONGLE_CACHE.unlink()
+        except OSError:
+            pass
+        return None
+    os.environ.setdefault("DISTILLERY_DONGLE_ID", cached)
+    return cached
+
 
 
 def set_dongle_id(dongle_id: str, *, persist: bool = True) -> dict[str, Any]:
-    """Store dongle id in process env (+ optional .cache file). Mirror JWT/SSH Save."""
+    """Store dongle id in process env (+ optional .cache file). Mirror JWT/SSH Save.
+
+    Rejects the labeled demo/fixture id — never persist it as a live target.
+    """
     value = (dongle_id or "").strip()
     if not value:
         raise ValueError("dongle_id must be a non-empty string")
+    if is_banned_demo_dongle(value):
+        raise ValueError(
+            "demo dongle 3e2de7ed… is banned — use Save with a real id or Auto from ADB/SSH"
+        )
     os.environ["DISTILLERY_DONGLE_ID"] = value
     cached = False
     if persist:

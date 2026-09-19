@@ -103,7 +103,20 @@
       "ADB serial alone",
       "suggested_host alone",
       "demo 3e2de7ed673817c2 as default",
-      "fake id when ADB/SSH up but params empty"
+      "fake id when ADB/SSH up but params empty",
+      "auto-query demo dongle from .cache leftover"
     ]
+  },
+  "public_routes": {
+    "request": "GET /routes?source=connect&scope=public",
+    "needs": "COMMA_JWT / CONNECT_JWT only (no local dongle)",
+    "fetch": "Connect GET /v1/me/devices then per-device /v1/devices/{id}/routes; include shared (is_owner=false) + is_public=true",
+    "never": "query demo dongle 3e2de7ed673817c2",
+    "empty": {
+      "no_jwt": "empty_reason=connect_not_configured",
+      "401": "empty_reason=connect_unauthorized",
+      "no_hits": "empty_reason=empty_public"
+    },
+    "ui": "Ingest segmented picker: Public routes | My Connect | SSH/ADB"
   }
 }

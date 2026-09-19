@@ -413,6 +413,71 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-size: 0.68rem;
   line-height: 1.35;
 }
+.ingest-source-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.15rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-1);
+}
+.ingest-source-tabs button {
+  flex: 1;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.74rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.ingest-source-tabs button:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+.ingest-source-tabs button.active {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: rgba(80, 200, 120, 0.1);
+  font-weight: 600;
+}
+.ingest-source-tabs button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.ingest-conn-details {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.25rem 0.55rem 0.45rem;
+  background: rgba(0, 0, 0, 0.15);
+}
+.ingest-conn-details > summary {
+  cursor: pointer;
+  font-size: 0.72rem;
+  color: var(--text-mute);
+  padding: 0.2rem 0;
+  list-style: none;
+}
+.ingest-conn-details > summary::-webkit-details-marker { display: none; }
+.ingest-conn-details > summary::before {
+  content: "▸ ";
+  color: var(--text-mute);
+}
+.ingest-conn-details[open] > summary::before { content: "▾ "; }
+.ingest-conn-details .ingest-dongle-row,
+.ingest-conn-details .ingest-jwt-row,
+.ingest-conn-details .ingest-ssh-row {
+  margin-top: 0.4rem;
+}
+.badge-scope {
+  font-size: 0.58rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  border: 1px solid rgba(108, 182, 255, 0.45);
+  color: var(--info);
+  background: rgba(108, 182, 255, 0.08);
+  text-transform: lowercase;
+}
 .ingest-actions.primary-row button { min-width: 8.5rem; }
 .ingest-actions.secondary-row { opacity: 0.95; }
 .fixture-btn {

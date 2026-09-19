@@ -6,13 +6,14 @@
 
 | Prefer | When |
 |--------|------|
-| `connect` | `COMMA_JWT` / `CONNECT_JWT` set |
+| `connect` + `scope=public` | JWT only — shared (`is_owner=false`) + `is_public` routes via `/v1/me/devices` |
+| `connect` (`scope=mine`) | JWT + saved dongle → `/v1/devices/{dongle}/routes` |
 | `ssh` | `MICI_SSH_HOST` (+ optional `MICI_SSH_KEY`, `MICI_SSH_USER`) |
 | `fixture` | No creds, or `DISTILLERY_INGEST_FIXTURE=1` |
 
 Fixture routes are **truthful-shaped** (Connect-like `route_id`, segments, per-cam hevc metadata) and labeled `meta.fixture` / `meta.label=fixture` with `placeholder=true` on samples.
 
-Dongle: empty until `POST /dongle` / `DISTILLERY_DONGLE_ID` / `.cache/dongle_id`, or auto-hydrate when ADB/SSH reads `/data/params/d/DongleId` (never overwrites a saved id; never invents a demo id). Fixture sample may use labeled id `3e2de7ed673817c2`.
+Dongle: empty until `POST /dongle` / `DISTILLERY_DONGLE_ID` / `.cache/dongle_id`, or auto-hydrate when ADB/SSH reads `/data/params/d/DongleId` (never overwrites a saved id; never invents a demo id). Stale demo id `3e2de7ed673817c2` in env/cache is cleared and never auto-queried. Fixture sample may still use that labeled id.
 
 ## Event contract
 

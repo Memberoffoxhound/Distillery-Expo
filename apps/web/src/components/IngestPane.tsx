@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DistilleryEvent, StageName } from "../types/events";
 import {
+  DEMO_DONGLE_ID,
   fetchDongle,
   fetchDiscover,
   fetchDiscoverDevices,
   fetchRoutes,
   formatRouteLength,
+  isBannedDemoDongle,
   postDiscoverConnect,
   saveDongleId,
   saveDiscoverSsh,
   testDiscoverSsh,
+  type ConnectScope,
   type DiscoverDevice,
   type DiscoverOverview,
   type DongleInfo,
@@ -49,26 +52,33 @@ function shortRouteId(id: string): string {
   return id.length > 28 ? `${id.slice(0, 26)}…` : id;
 }
 
-type DiscoverMode = "idle" | "lan" | "connect" | "fixture" | "auto";
+/** One calm picker: Public routes | My Connect | SSH/ADB */
+type SourceTab = "public" | "mine" | "lan";
 
-/** Honest connection posture for a normal person — not env-var archaeology. */
+function tabToFetch(tab: SourceTab): { source: RouteSource; scope?: ConnectScope; mode: SourceTab } {
+  if (tab === "public") return { source: "connect", scope: "public", mode: "public" };
+  if (tab === "mine") return { source: "connect", scope: "mine", mode: "mine" };
+  return { source: "ssh", mode: "lan" };
+}
+
 function connectionState(
   dongle: DongleInfo | null,
-  mode: DiscoverMode,
+  tab: SourceTab,
   scanning: boolean,
   listSource: string,
-  routeCount: number
+  routeCount: number,
+  emptyReason: string | null
 ): { label: string; tone: string; detail: string } {
   if (scanning) {
     return {
-      label: "Scanning…",
+      label: "Loading…",
       tone: "scanning",
       detail:
-        mode === "lan"
-          ? "Looking for mici on LAN (ADB + SSH)."
-          : mode === "connect"
-            ? "Asking comma Connect for routes."
-            : "Resolving routes…",
+        tab === "public"
+          ? "Browsing shared & public Connect drives."
+          : tab === "mine"
+            ? "Asking comma Connect for your dongle routes."
+            : "Looking for mici on LAN (ADB + SSH).",
     };
   }
   if (!dongle) {
@@ -79,36 +89,31 @@ function connectionState(
     };
   }
 
-  const connectStatus = (dongle.connect_status ?? "").toLowerCase();
-  const adbStatus = (dongle.adb_status ?? "").toLowerCase();
-  const needsJwt =
-    connectStatus === "needs_jwt" ||
-    connectStatus === "needs-jwt" ||
-    (!dongle.connect_available && mode === "connect");
-
-  if (needsJwt) {
+  if (emptyReason === "connect_unauthorized" || emptyReason === "connect_not_configured") {
     return {
       label: "Needs JWT",
       tone: "needs-jwt",
-      detail: "Connect needs COMMA_JWT / CONNECT_JWT — paste JWT below, or Find on LAN.",
+      detail: "Paste Connect JWT under Connection, then Save.",
     };
   }
 
-  if (dongle.force_fixture && mode !== "lan" && mode !== "connect") {
+  if (tab === "public" && routeCount === 0) {
     return {
-      label: "Fixture",
-      tone: "fixture",
-      detail: "Offline fixture forced — labeled fallback, not a live mici.",
+      label: "No public hits",
+      tone: "empty",
+      detail: "No shared/public Connect routes yet — honest empty.",
     };
   }
 
-  const lanReady =
-    dongle.ssh_available ||
-    dongle.adb_available === true ||
-    adbStatus === "found" ||
-    adbStatus === "ready";
+  if (tab === "mine" && !(dongle.dongle_id || "").trim() && routeCount === 0) {
+    return {
+      label: "Needs Dongle",
+      tone: "needs-jwt",
+      detail: "Save Dongle under Connection, or switch to Public / SSH/ADB.",
+    };
+  }
 
-  if (mode === "lan" && routeCount === 0) {
+  if (tab === "lan" && routeCount === 0) {
     if (listSource === "ssh" || dongle.ssh_available) {
       return {
         label: "SSH · 0 routes",
@@ -116,56 +121,25 @@ function connectionState(
         detail: "SSH ok · 0 routes under /data/media/0/realdata",
       };
     }
-    if (!lanReady && dongle.adb_available !== true && !dongle.ssh_available) {
-      return {
-        label: "Offline",
-        tone: "offline",
-        detail: "No ADB or SSH path yet — install adb or configure SSH below.",
-      };
-    }
     return {
       label: "No devices",
       tone: "empty",
-      detail: "LAN scan returned nothing. Check ADB/SSH, or Save Dongle + Use Connect.",
+      detail: "No ADB/SSH path yet — open Connection to configure.",
     };
   }
 
-  if (mode === "connect" && routeCount === 0 && dongle.connect_available) {
-    return {
-      label: "Connected",
-      tone: "connected",
-      detail: "Connect is up, but no routes listed for this dongle.",
-    };
-  }
-
-  if (routeCount > 0 && (listSource === "connect" || listSource === "ssh")) {
-    return {
-      label: "Connected",
-      tone: "connected",
-      detail: `${routeCount} route${routeCount === 1 ? "" : "s"} via ${listSource}.`,
-    };
-  }
-
-  if (listSource === "fixture" || mode === "fixture") {
-    return {
-      label: "Fixture",
-      tone: "fixture",
-      detail: "Showing labeled fixture routes — not a live device.",
-    };
-  }
-
-  if (dongle.connect_available || lanReady) {
+  if (routeCount > 0) {
     return {
       label: "Ready",
       tone: "connected",
-      detail: "Pick Find on LAN or Use Connect to list routes.",
+      detail: `${routeCount} route${routeCount === 1 ? "" : "s"} via ${listSource}${tab === "public" ? " · public" : ""}.`,
     };
   }
 
   return {
-    label: "Offline",
-    tone: "offline",
-    detail: "No Connect / ADB / SSH yet — Save Dongle + JWT, or Find on LAN.",
+    label: "Ready",
+    tone: "connected",
+    detail: "Pick a source tab, then a route.",
   };
 }
 
@@ -186,14 +160,12 @@ export function IngestPane({
   const [listError, setListError] = useState<string | null>(null);
   const [routesMessage, setRoutesMessage] = useState<string | null>(null);
   const [emptyReason, setEmptyReason] = useState<string | null>(null);
-  const [prefer, setPrefer] = useState<RouteSource>("connect");
-  const [mode, setMode] = useState<DiscoverMode>("idle");
+  const [tab, setTab] = useState<SourceTab>("public");
   const [lanNote, setLanNote] = useState<string | null>(null);
 
   const [pickedDevice, setPickedDevice] = useState<string | null>(null);
   const [discover, setDiscover] = useState<DiscoverOverview | null>(null);
   const [dongleDraft, setDongleDraft] = useState("");
-  /** How the draft/saved id was obtained — calm status next to Save. */
   const [dongleOrigin, setDongleOrigin] = useState<"none" | "saved" | "adb" | "ssh" | "manual">("none");
   const dongleTouchedRef = useRef(false);
   const [jwtDraft, setJwtDraft] = useState("");
@@ -202,210 +174,194 @@ export function IngestPane({
   const [sshPort, setSshPort] = useState("22");
   const [sshIdentity, setSshIdentity] = useState("");
   const [sshProbeNote, setSshProbeNote] = useState<string | null>(null);
+  const [connOpen, setConnOpen] = useState(false);
 
-  const load = useCallback(async (source: RouteSource, nextMode?: DiscoverMode, deviceId?: string | null) => {
-    setLoading(true);
-    setListError(null);
-    setRoutesMessage(null);
-    setEmptyReason(null);
-    if (nextMode) setMode(nextMode);
-    try {
-      const [d, overview, adb, r] = await Promise.all([
-        fetchDongle(),
-        fetchDiscover().catch(() => null),
-        fetchDiscoverDevices().catch(() => ({ devices: [] as DiscoverDevice[], adb_available: false })),
-        fetchRoutes(source, 20, {
-          device: deviceId ?? pickedDevice,
-          ssh_host: null,
-        }),
-      ]);
-      setDiscover(overview);
-      const adbDevices = (adb.devices ?? overview?.devices?.devices ?? []) as DiscoverDevice[];
-      const connect = overview?.connect;
-      const ssh = overview?.ssh;
-      const enriched: DongleInfo = {
-        ...d,
-        connect_available: Boolean(connect?.available ?? connect?.configured ?? d.connect_available),
-        ssh_available: Boolean(ssh?.available ?? ssh?.configured ?? d.ssh_available),
-        force_fixture: Boolean(overview?.fixture?.forced ?? d.force_fixture),
-        connect_status: connect?.configured
-          ? "connected"
-          : connect?.available
-            ? "needs_jwt"
-            : "offline",
-        adb_available: Boolean(adb.adb_available ?? overview?.devices?.adb_available),
-        adb_status: (() => {
-          const avail = Boolean(adb.adb_available ?? overview?.devices?.adb_available);
-          const n = (adb.devices ?? []).length;
-          if (!avail) return "not_on_path";
-          return n > 0 ? "found" : "ready";
-        })(),
-        devices: adbDevices.map((x) => ({
-          id: x.id,
-          name: x.model ?? x.name ?? x.id,
-          kind: x.transport === "tcp" || x.transport === "usb" ? "adb" : (x.kind ?? "adb"),
-          online: String(x.state ?? "").toLowerCase() === "device",
-          ...x,
-        })),
-      };
-      setDongle(enriched);
+  const applyRoutes = (source: RouteSource, r: Awaited<ReturnType<typeof fetchRoutes>>) => {
+    const askedLive = source === "ssh" || source === "connect";
+    const swappedToFixture = askedLive && r.source === "fixture";
+    const shown = swappedToFixture ? [] : r.routes;
+    setRoutes(shown);
+    setListSource(swappedToFixture ? source : r.source);
+    setRoutesMessage(
+      swappedToFixture
+        ? "SSH/Connect returned fixture unexpectedly — showing empty (live path only)."
+        : r.message ?? null
+    );
+    setEmptyReason(swappedToFixture ? "refused_fixture_swap" : r.empty_reason ?? null);
+    setSelected((prev) => {
+      if (prev && shown.some((x) => x.route_id === prev)) return prev;
+      return shown[0]?.route_id ?? null;
+    });
+    return shown;
+  };
 
-      const suggestedRaw =
-        overview?.suggested_dongle_id ?? (d as DongleInfo).suggested_dongle_id ?? null;
-      const suggested =
-        typeof suggestedRaw === "string" && suggestedRaw.trim() ? suggestedRaw.trim() : null;
-      const discSourceRaw =
-        overview?.discovered_from ??
-        overview?.dongle_discovery_source ??
-        (d as DongleInfo).discovered_from ??
-        (d as DongleInfo).dongle_discovery_source ??
-        null;
-      const discSource =
-        discSourceRaw === "ssh" ? "ssh" : discSourceRaw === "adb" ? "adb" : null;
-
-      // Prefer saved id; else auto-fill from real device DongleId (never invent).
-      if (enriched.dongle_id) {
-        setDongleDraft((prev) => (prev.trim() ? prev : enriched.dongle_id));
-        if (!dongleTouchedRef.current) {
-          setDongleOrigin((prev) => (prev === "manual" ? prev : "saved"));
-        }
-      } else if (suggested && !dongleTouchedRef.current) {
-        setDongleDraft((prev) => (prev.trim() ? prev : suggested));
-        if (discSource) setDongleOrigin(discSource);
-      }
-
-      // On discover / LAN refresh: auto-persist when unset and device gave a real id.
-      const shouldAutoPersist =
-        Boolean(suggested) &&
-        !Boolean(enriched.configured) &&
-        !(enriched.dongle_id || "").trim() &&
-        !dongleTouchedRef.current;
-      if (shouldAutoPersist && suggested) {
-        try {
-          const saved = await saveDongleId(suggested, true);
-          enriched.dongle_id = saved.dongle_id || suggested;
-          enriched.configured = true;
-          setDongle({ ...enriched });
-          setDongleDraft(saved.dongle_id || suggested);
-          if (discSource) setDongleOrigin(discSource);
-          // Routes were fetched before persist — refresh live lists with the new id.
-          if (source === "connect" || source === "ssh" || source === "auto") {
-            const r2 = await fetchRoutes(source, 20, {
-              device: deviceId ?? pickedDevice,
-              ssh_host: null,
-            });
-            const askedLive2 = source === "ssh" || source === "connect";
-            const swapped2 = askedLive2 && r2.source === "fixture";
-            setRoutes(swapped2 ? [] : r2.routes);
-            setListSource(swapped2 ? source : r2.source);
-            setRoutesMessage(
-              swapped2
-                ? "SSH/Connect returned fixture unexpectedly — showing empty (live path only)."
-                : r2.message ?? null
-            );
-            setEmptyReason(swapped2 ? "refused_fixture_swap" : r2.empty_reason ?? null);
-            const shown2 = swapped2 ? [] : r2.routes;
-            setSelected((prev) => {
-              if (prev && shown2.some((x) => x.route_id === prev)) return prev;
-              return shown2[0]?.route_id ?? null;
-            });
-          }
-        } catch {
-          // Keep draft filled; manual Save remains backup.
-          if (discSource) setDongleOrigin(discSource);
-        }
-      }
-      // Explicit source=ssh|connect: never present fixture rows as live SSH/Connect.
-      const askedLive = source === "ssh" || source === "connect";
-      const swappedToFixture = askedLive && r.source === "fixture";
-      setRoutes(swappedToFixture ? [] : r.routes);
-      setListSource(swappedToFixture ? source : r.source);
-      setRoutesMessage(
-        swappedToFixture
-          ? "SSH/Connect returned fixture unexpectedly — showing empty (live path only)."
-          : r.message ?? null
-      );
-      setEmptyReason(swappedToFixture ? "refused_fixture_swap" : r.empty_reason ?? null);
-      setPrefer(source);
-      const shown = swappedToFixture ? [] : r.routes;
-      setSelected((prev) => {
-        if (prev && shown.some((x) => x.route_id === prev)) return prev;
-        return shown[0]?.route_id ?? null;
-      });
-
-      // Hydrate SSH form from status; prefill host from ADB tcp suggested_host when empty
-      if (ssh?.host) {
-        setSshHost((prev) => prev || String(ssh.host));
-        if (ssh.user) setSshUser(String(ssh.user));
-        if (ssh.port != null) setSshPort(String(ssh.port));
-        if (ssh.identity_path) setSshIdentity(String(ssh.identity_path));
-      } else {
-        const suggested = adbDevices.find((d) => d.suggested_host)?.suggested_host;
-        if (suggested) {
-          setSshHost((prev) => (prev.trim() ? prev : String(suggested)));
-        }
-      }
-
-      if (nextMode === "lan" || source === "ssh" || source === "auto") {
-        const effectiveSource = swappedToFixture ? source : r.source;
-        if (
-          shown.length === 0 &&
-          (source === "ssh" || effectiveSource === "ssh" || enriched.ssh_available || Boolean(r.message))
-        ) {
-          // Honest SSH empty beats ADB chatter — Phil: connected but 0 routes under realdata.
-          setLanNote(
-            r.message ||
-              "SSH ok · 0 routes under /data/media/0/realdata — record a drive, then Refresh."
-          );
-        } else if (adbDevices.length > 0) {
-          setLanNote(
-            `${adbDevices.length} ADB device${adbDevices.length === 1 ? "" : "s"} via GET /discover/devices — pick one, then a route.`
-          );
-        } else if (!enriched.ssh_available && shown.length === 0) {
-          setLanNote(
-            "No ADB devices and SSH not configured. Save Dongle + JWT, or configure SSH."
-          );
-        } else if (shown.length === 0) {
-          setLanNote("Discovery ok, but no routes returned. Try Use Connect or Find on LAN.");
-        } else {
-          setLanNote(null);
-        }
-      } else if (nextMode === "connect") {
-        if (!connect?.configured) {
-          setLanNote("Connect needs a JWT — paste below or POST /discover/connect.");
-        } else {
-          setLanNote(null);
-        }
-      } else {
-        setLanNote(null);
-      }
-    } catch (e) {
-      setListError(e instanceof Error ? e.message : "Could not load routes");
-      setRoutes([]);
+  const load = useCallback(
+    async (nextTab: SourceTab, deviceId?: string | null) => {
+      setLoading(true);
+      setListError(null);
       setRoutesMessage(null);
       setEmptyReason(null);
-      setLanNote(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [pickedDevice]);
+      setTab(nextTab);
+      const { source, scope } = tabToFetch(nextTab);
+      try {
+        const [d, overview, adb, r] = await Promise.all([
+          fetchDongle(),
+          fetchDiscover().catch(() => null),
+          fetchDiscoverDevices().catch(() => ({
+            devices: [] as DiscoverDevice[],
+            adb_available: false,
+          })),
+          fetchRoutes(source, 20, {
+            device: deviceId ?? pickedDevice,
+            ssh_host: null,
+            scope: scope ?? null,
+          }),
+        ]);
+        setDiscover(overview);
+        const adbDevices = (adb.devices ?? overview?.devices?.devices ?? []) as DiscoverDevice[];
+        const connect = overview?.connect;
+        const ssh = overview?.ssh;
+
+        // Never surface banned demo id as configured
+        let liveDongleId = (d.dongle_id || "").trim();
+        if (isBannedDemoDongle(liveDongleId)) {
+          liveDongleId = "";
+        }
+
+        const enriched: DongleInfo = {
+          ...d,
+          dongle_id: liveDongleId,
+          configured: Boolean(liveDongleId),
+          connect_available: Boolean(connect?.available ?? connect?.configured ?? d.connect_available),
+          ssh_available: Boolean(ssh?.available ?? ssh?.configured ?? d.ssh_available),
+          force_fixture: Boolean(overview?.fixture?.forced ?? d.force_fixture),
+          connect_status: connect?.configured
+            ? "connected"
+            : connect?.available
+              ? "needs_jwt"
+              : "offline",
+          adb_available: Boolean(adb.adb_available ?? overview?.devices?.adb_available),
+          adb_status: (() => {
+            const avail = Boolean(adb.adb_available ?? overview?.devices?.adb_available);
+            const n = (adb.devices ?? []).length;
+            if (!avail) return "not_on_path";
+            return n > 0 ? "found" : "ready";
+          })(),
+          devices: adbDevices.map((x) => ({
+            id: x.id,
+            name: x.model ?? x.name ?? x.id,
+            kind: x.transport === "tcp" || x.transport === "usb" ? "adb" : (x.kind ?? "adb"),
+            online: String(x.state ?? "").toLowerCase() === "device",
+            ...x,
+          })),
+        };
+        setDongle(enriched);
+
+        const suggestedRaw =
+          overview?.suggested_dongle_id ?? (d as DongleInfo).suggested_dongle_id ?? null;
+        let suggested =
+          typeof suggestedRaw === "string" && suggestedRaw.trim() ? suggestedRaw.trim() : null;
+        if (isBannedDemoDongle(suggested)) suggested = null;
+
+        const discSourceRaw =
+          overview?.discovered_from ??
+          overview?.dongle_discovery_source ??
+          (d as DongleInfo).discovered_from ??
+          (d as DongleInfo).dongle_discovery_source ??
+          null;
+        const discSource =
+          discSourceRaw === "ssh" ? "ssh" : discSourceRaw === "adb" ? "adb" : null;
+
+        if (enriched.dongle_id) {
+          setDongleDraft((prev) => (prev.trim() && !isBannedDemoDongle(prev) ? prev : enriched.dongle_id));
+          if (!dongleTouchedRef.current) {
+            setDongleOrigin((prev) => (prev === "manual" ? prev : "saved"));
+          }
+        } else if (suggested && !dongleTouchedRef.current) {
+          setDongleDraft((prev) => (prev.trim() && !isBannedDemoDongle(prev) ? prev : suggested));
+          if (discSource) setDongleOrigin(discSource);
+        } else if (isBannedDemoDongle(dongleDraft)) {
+          setDongleDraft("");
+          setDongleOrigin("none");
+        }
+
+        const shouldAutoPersist =
+          Boolean(suggested) &&
+          !Boolean(enriched.configured) &&
+          !(enriched.dongle_id || "").trim() &&
+          !dongleTouchedRef.current &&
+          !isBannedDemoDongle(suggested);
+
+        if (shouldAutoPersist && suggested) {
+          try {
+            const saved = await saveDongleId(suggested, true);
+            enriched.dongle_id = saved.dongle_id || suggested;
+            enriched.configured = true;
+            setDongle({ ...enriched });
+            setDongleDraft(saved.dongle_id || suggested);
+            if (discSource) setDongleOrigin(discSource);
+            if (nextTab === "mine" || nextTab === "lan") {
+              const r2 = await fetchRoutes(source, 20, {
+                device: deviceId ?? pickedDevice,
+                ssh_host: null,
+                scope: scope ?? null,
+              });
+              applyRoutes(source, r2);
+            }
+          } catch {
+            if (discSource) setDongleOrigin(discSource);
+          }
+        }
+
+        applyRoutes(source, r);
+
+        if (ssh?.host) {
+          setSshHost((prev) => prev || String(ssh.host));
+          if (ssh.user) setSshUser(String(ssh.user));
+          if (ssh.port != null) setSshPort(String(ssh.port));
+          if (ssh.identity_path) setSshIdentity(String(ssh.identity_path));
+        } else {
+          const suggestedHost = adbDevices.find((d) => d.suggested_host)?.suggested_host;
+          if (suggestedHost) {
+            setSshHost((prev) => (prev.trim() ? prev : String(suggestedHost)));
+          }
+        }
+
+        if (nextTab === "lan") {
+          if (r.message) setLanNote(r.message);
+          else if (adbDevices.length > 0) {
+            setLanNote(
+              `${adbDevices.length} ADB device${adbDevices.length === 1 ? "" : "s"} — pick one, then a route.`
+            );
+          } else if (!enriched.ssh_available) {
+            setLanNote("No ADB devices and SSH not configured — open Connection.");
+          } else {
+            setLanNote(null);
+          }
+        } else if (nextTab === "public" && !connect?.configured) {
+          setLanNote("Public routes need a Connect JWT — open Connection.");
+          setConnOpen(true);
+        } else {
+          setLanNote(null);
+        }
+      } catch (e) {
+        setListError(e instanceof Error ? e.message : "Could not load routes");
+        setRoutes([]);
+        setRoutesMessage(null);
+        setEmptyReason(null);
+        setLanNote(null);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [pickedDevice, dongleDraft]
+  );
 
   useEffect(() => {
-    // Live path first — never boot into fixture theater.
-    void load("connect", "connect");
-  }, [load]);
-
-  const findOnLan = () => {
-    void load("ssh", "lan", pickedDevice);
-  };
-
-  const useConnect = () => {
-    void load("connect", "connect");
-  };
-
-  const useFixture = () => {
-    void load("fixture", "fixture");
-  };
+    // Happy path: Public routes first (mici may be offline).
+    void load("public");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const saveJwt = async () => {
     const token = jwtDraft.trim();
@@ -414,7 +370,7 @@ export function IngestPane({
     try {
       await postDiscoverConnect(token, true);
       setJwtDraft("");
-      await load("connect", "connect");
+      await load(tab === "lan" ? "public" : tab);
     } catch (e) {
       setListError(e instanceof Error ? e.message : "Connect JWT failed");
     } finally {
@@ -425,13 +381,18 @@ export function IngestPane({
   const saveDongle = async () => {
     const id = dongleDraft.trim();
     if (!id) return;
+    if (isBannedDemoDongle(id)) {
+      setListError(`Demo dongle ${DEMO_DONGLE_ID.slice(0, 8)}… is banned — use a real id or Auto from ADB/SSH.`);
+      setDongleDraft("");
+      return;
+    }
     setLoading(true);
     try {
       const info = await saveDongleId(id, true);
       dongleTouchedRef.current = false;
       setDongleOrigin("manual");
       setDongleDraft(info.dongle_id || id);
-      await load("connect", "connect");
+      await load("mine");
     } catch (e) {
       setListError(e instanceof Error ? e.message : "Dongle ID save failed");
     } finally {
@@ -453,7 +414,7 @@ export function IngestPane({
         identity_path: sshIdentity.trim() || null,
         persist: true,
       });
-      await load("ssh", "lan", pickedDevice);
+      await load("lan", pickedDevice);
     } catch (e) {
       setListError(e instanceof Error ? e.message : "SSH config failed");
     } finally {
@@ -465,7 +426,6 @@ export function IngestPane({
     setSshProbeNote(null);
     setLoading(true);
     try {
-      // Persist first if host filled so probe uses current form values
       const host = sshHost.trim();
       if (host) {
         const portNum = Number.parseInt(sshPort.trim() || "22", 10);
@@ -478,12 +438,8 @@ export function IngestPane({
         });
       }
       const probe = await testDiscoverSsh();
-      if (probe.ok) {
-        setSshProbeNote("SSH probe ok");
-      } else {
-        setSshProbeNote(probe.error || "SSH probe failed");
-      }
-      await load(prefer === "fixture" ? "ssh" : prefer, mode === "idle" ? "lan" : mode, pickedDevice);
+      setSshProbeNote(probe.ok ? "SSH probe ok" : probe.error || "SSH probe failed");
+      await load("lan", pickedDevice);
     } catch (e) {
       setSshProbeNote(e instanceof Error ? e.message : "SSH probe failed");
     } finally {
@@ -503,12 +459,12 @@ export function IngestPane({
     if (suggested) {
       setSshHost((prev) => (prev.trim() ? prev : String(suggested)));
     }
-    void load(prefer === "fixture" ? "ssh" : prefer, "lan", id);
+    void load("lan", id);
   };
 
   const conn = useMemo(
-    () => connectionState(dongle, mode, loading, listSource, routes.length),
-    [dongle, mode, loading, listSource, routes.length]
+    () => connectionState(dongle, tab, loading, listSource, routes.length, emptyReason),
+    [dongle, tab, loading, listSource, routes.length, emptyReason]
   );
 
   const metrics = latestMetrics(events, "ingest");
@@ -518,160 +474,142 @@ export function IngestPane({
   );
 
   const discoveredDevices = dongle?.devices ?? [];
-  const connectConfigured = Boolean(discover?.connect?.configured);
   const sshConfigured = Boolean(discover?.ssh?.configured || discover?.ssh?.host);
+  const preferForIngest: RouteSource = tab === "lan" ? "ssh" : "connect";
+  const lanAvailable = Boolean(
+    dongle?.ssh_available ||
+      dongle?.adb_available ||
+      (dongle?.adb_status ?? "").toLowerCase() === "found" ||
+      (dongle?.adb_status ?? "").toLowerCase() === "ready"
+  );
 
   return (
     <div className={`ingest-pane${routes.length > 0 ? " has-routes" : ""}`}>
       <div className="ingest-head">
         <div className="ingest-dongle">
-          <span className="k">dongle</span>
-          <span className="v mono">{dongle?.dongle_id ? dongle.dongle_id : "not set"}</span>
+          <span className="k">source</span>
           <span className={`conn-chip tone-${conn.tone}`} title={conn.detail}>
             {conn.label}
           </span>
           <span className="source-chip" title="Resolved list source">
             {listSource}
+            {tab === "public" ? " · public" : tab === "mine" ? " · mine" : ""}
           </span>
-        </div>
-        <div className="ingest-cred" aria-label="Route source availability">
-          {dongle && (
-            <>
-              <span
-                className={dongle.connect_available ? "ok" : "off"}
-                title={
-                  dongle.connect_available
-                    ? "comma Connect available"
-                    : "Connect unavailable — needs JWT"
-                }
-              >
-                Connect
-              </span>
-              <span
-                className={dongle.ssh_available ? "ok" : "off"}
-                title={
-                  dongle.ssh_available || Boolean(discover?.ssh?.configured)
-                    ? "SSH ready"
-                    : "SSH not configured"
-                }
-              >
-                SSH
-              </span>
-              <span
-                className={
-                  dongle.adb_available === true ||
-                  (dongle.adb_status ?? "").toLowerCase() === "found" ||
-                  (dongle.adb_status ?? "").toLowerCase() === "ready"
-                    ? "ok"
-                    : "off"
-                }
-                title={(() => {
-                  const n = (dongle.devices ?? []).filter(
-                    (d) => (d.kind ?? "adb") === "adb" || !d.kind
-                  ).length;
-                  const st = (dongle.adb_status ?? "").toLowerCase();
-                  if (dongle.adb_available === true) {
-                    if (n > 0 || st === "found" || st === "ready") {
-                      return n > 0 ? `ADB ready · ${n} device${n === 1 ? "" : "s"}` : "ADB ready · 0 devices";
-                    }
-                    return "ADB ready · 0 devices";
-                  }
-                  if (st === "missing" || st === "not_on_path" || st === "error") {
-                    return "adb not on PATH";
-                  }
-                  return "adb not on PATH";
-                })()}
-              >
-                ADB
-              </span>
-              <span className="fixture-chip" title="Labeled offline fallback — never looks live">
-                fixture
-              </span>
-            </>
-          )}
         </div>
       </div>
 
       <p className="ingest-conn-detail muted">{conn.detail}</p>
 
-      <div className="ingest-dongle-row" aria-label="Dongle ID">
-        <input
-          type="text"
-          placeholder="Dongle ID (auto from ADB/SSH or type)"
-          value={dongleDraft}
-          onChange={(e) => {
-            dongleTouchedRef.current = true;
-            setDongleOrigin("manual");
-            setDongleDraft(e.target.value);
-          }}
-          disabled={loading}
-          aria-label="Dongle ID"
-          className="mono"
-        />
+      {/* One calm segmented picker */}
+      <div className="ingest-source-tabs" role="tablist" aria-label="Route source">
         <button
-          disabled={loading || !dongleDraft.trim() || dongleDraft.trim().length < 8}
-          onClick={() => void saveDongle()}
-          title="POST /dongle {dongle_id, persist} — manual Save backup"
+          type="button"
+          role="tab"
+          aria-selected={tab === "public"}
+          className={tab === "public" ? "active" : ""}
+          disabled={loading}
+          onClick={() => void load("public")}
+          title="GET /routes?source=connect&scope=public"
         >
-          Save Dongle
+          Public routes
         </button>
-        {dongleOrigin === "adb" && (
-          <span className="dongle-origin-chip" title="Read /data/params/d/DongleId via ADB">
-            Auto from ADB
-          </span>
-        )}
-        {dongleOrigin === "ssh" && (
-          <span className="dongle-origin-chip" title="Read /data/params/d/DongleId via SSH">
-            Auto from SSH
-          </span>
-        )}
-        {dongleOrigin === "manual" && dongleDraft.trim() && (
-          <span className="dongle-origin-chip muted" title="Typed / Save Dongle">
-            Manual Save
-          </span>
-        )}
-        {dongleOrigin === "saved" && dongle?.dongle_id && (
-          <span className="dongle-origin-chip muted" title="Loaded from cache / env">
-            Saved
-          </span>
-        )}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "mine"}
+          className={tab === "mine" ? "active" : ""}
+          disabled={loading}
+          onClick={() => void load("mine")}
+          title="GET /routes?source=connect&scope=mine"
+        >
+          My Connect
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "lan"}
+          className={tab === "lan" ? "active" : ""}
+          disabled={loading}
+          onClick={() => void load("lan")}
+          title={
+            lanAvailable || sshConfigured
+              ? "GET /routes?source=ssh"
+              : "SSH/ADB — configure under Connection if offline"
+          }
+        >
+          SSH/ADB
+        </button>
       </div>
 
       <div className="ingest-actions primary-row">
         <button
           className="primary"
-          disabled={loading}
-          onClick={findOnLan}
-          title="GET /discover + /discover/devices, then /routes?source=ssh&device=…"
-        >
-          Find mici on LAN
-        </button>
-        <button
-          className="primary"
-          disabled={loading}
-          onClick={useConnect}
-          title="GET /discover/connect + /routes?source=connect"
-        >
-          Use Connect
-        </button>
-        <button
-          className="primary"
           disabled={busy || loading || !selected}
-          onClick={() => onIngest({ source: prefer, routeId: selected })}
-          title="Ingest the selected live route"
+          onClick={() => onIngest({ source: preferForIngest, routeId: selected })}
+          title="Ingest the selected route"
         >
           Ingest selected
         </button>
         <button
           disabled={loading}
-          onClick={() => void load(prefer === "fixture" ? "connect" : prefer, mode === "fixture" ? "connect" : mode)}
+          onClick={() => void load(tab, pickedDevice)}
           title="Refresh route list"
         >
           Refresh
         </button>
       </div>
 
-      {(mode === "connect" || mode === "idle" || !connectConfigured) && (
+      {/* Connection disclosure — JWT / Dongle / SSH secondary */}
+      <details
+        className="ingest-conn-details"
+        open={connOpen || emptyReason === "connect_not_configured" || emptyReason === "dongle_id_required"}
+        onToggle={(e) => setConnOpen((e.target as HTMLDetailsElement).open)}
+      >
+        <summary>Connection</summary>
+
+        <div className="ingest-dongle-row" aria-label="Dongle ID">
+          <input
+            type="text"
+            placeholder="Dongle ID (auto from ADB/SSH or type)"
+            value={dongleDraft}
+            onChange={(e) => {
+              dongleTouchedRef.current = true;
+              setDongleOrigin("manual");
+              setDongleDraft(e.target.value);
+            }}
+            disabled={loading}
+            aria-label="Dongle ID"
+            className="mono"
+          />
+          <button
+            disabled={loading || !dongleDraft.trim() || dongleDraft.trim().length < 8}
+            onClick={() => void saveDongle()}
+            title="POST /dongle — never saves demo 3e2de7ed…"
+          >
+            Save Dongle
+          </button>
+          {dongleOrigin === "adb" && (
+            <span className="dongle-origin-chip" title="Read /data/params/d/DongleId via ADB">
+              Auto from ADB
+            </span>
+          )}
+          {dongleOrigin === "ssh" && (
+            <span className="dongle-origin-chip" title="Read /data/params/d/DongleId via SSH">
+              Auto from SSH
+            </span>
+          )}
+          {dongleOrigin === "manual" && dongleDraft.trim() && (
+            <span className="dongle-origin-chip muted" title="Typed / Save Dongle">
+              Manual Save
+            </span>
+          )}
+          {dongleOrigin === "saved" && dongle?.dongle_id && (
+            <span className="dongle-origin-chip muted" title="Loaded from cache / env">
+              Saved
+            </span>
+          )}
+        </div>
+
         <div className="ingest-jwt-row">
           <input
             type="password"
@@ -689,167 +627,7 @@ export function IngestPane({
             Save JWT
           </button>
         </div>
-      )}
 
-      {discoveredDevices.length > 0 && (
-        <div className="device-picks" aria-label="Discovered devices">
-          <span className="k">Devices</span>
-          <div className="device-pick-list">
-            {discoveredDevices.map((dev, i) => {
-              const id = String(dev.id ?? dev.name ?? i);
-              const kind = String(dev.kind ?? "device");
-              const online = dev.online !== false;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  className={`device-pick ${online ? "" : "off"}${pickedDevice === id ? " selected" : ""}`}
-                  disabled={busy || !online}
-                  aria-pressed={pickedDevice === id}
-                  title={`Select discovered ${kind} → /routes?device=`}
-                  onClick={() => pickDevice(id)}
-                >
-                  <span className="device-pick-name">
-                    {String(dev.name ?? dev.id ?? "device")}
-                  </span>
-                  <span className="device-pick-kind mono">{kind}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {lanNote && <div className="ingest-note">{lanNote}</div>}
-
-      {listError && (
-        <div className="ingest-error">
-          Routes unavailable ({listError}). Is the API on :8000?
-        </div>
-      )}
-
-      {/* Routes are the hero — above SSH / fixture so TV layout cannot clip them away */}
-      <div className="route-list" role="listbox" aria-label="mici routes">
-        {loading && (
-          <EmptyState
-            title={mode === "lan" ? "Scanning LAN…" : "Loading routes"}
-            body={
-              mode === "lan"
-                ? "Looking for mici over ADB and SSH. Pick a found device — no manual IP dig."
-                : mode === "connect"
-                  ? "Asking comma Connect for routes on this dongle."
-                  : "Asking the API for mici routes."
-            }
-          />
-        )}
-        {!loading && !listError && routes.length === 0 && mode === "lan" && (
-          <EmptyState
-            title={
-              listSource === "ssh" || sshConfigured || dongle?.ssh_available
-                ? "SSH · 0 routes"
-                : "Nothing on LAN yet"
-            }
-            body={
-              routesMessage ||
-              (listSource === "ssh" || sshConfigured || dongle?.ssh_available
-                ? "SSH ok · 0 routes under /data/media/0/realdata"
-                : "No ADB or SSH routes found. Save Dongle + Use Connect, or configure SSH.")
-            }
-            hint={
-              emptyReason
-                ? `empty_reason=${emptyReason}`
-                : "GET /routes?source=ssh"
-            }
-            actions={
-              <>
-                <button
-                  type="button"
-                  disabled={loading}
-                  title="Record a drive on mici, then Refresh"
-                  onClick={() => void load("ssh", "lan", pickedDevice)}
-                >
-                  Record a drive / Refresh
-                </button>
-                <button
-                  type="button"
-                  disabled={loading}
-                  title="Re-check SSH host and /data/media/0/realdata"
-                  onClick={() => void testSsh()}
-                >
-                  Verify path
-                </button>
-                <button
-                  type="button"
-                  className="fixture-btn"
-                  disabled={loading}
-                  title="Labeled offline fallback only"
-                  onClick={useFixture}
-                >
-                  Offline fixture
-                </button>
-              </>
-            }
-          />
-        )}
-        {!loading && !listError && routes.length === 0 && mode === "connect" && (
-          <EmptyState
-            title={dongle?.connect_available ? "No Connect routes" : "Needs JWT"}
-            body={
-              dongle?.connect_available
-                ? "Connect is available but returned an empty list for this dongle."
-                : (!dongle?.dongle_id
-                  ? "Save your Dongle ID above, then paste JWT / Use Connect."
-                  : "comma Connect isn’t ready (JWT). Save JWT above, or Find on LAN.")
-            }
-            hint="GET /routes?source=connect"
-          />
-        )}
-        {!loading && !listError && routes.length === 0 && mode !== "lan" && mode !== "connect" && (
-          <EmptyState
-            title="No routes yet"
-            body="Nothing listed yet. Save Dongle, then Find on LAN or Use Connect."
-            hint="GET /routes?source=connect"
-          />
-        )}
-        {!loading &&
-          routes.map((r) => {
-            const active = selected === r.route_id;
-            const fixture =
-              r.source === "fixture" ||
-              Boolean(r.meta?.fixture) ||
-              r.meta?.label === "fixture" ||
-              listSource === "fixture";
-            return (
-              <button
-                key={r.route_id}
-                type="button"
-                role="option"
-                aria-selected={active}
-                className={`route-row ${active ? "selected" : ""} ${fixture ? "is-fixture" : ""}`}
-                onClick={() => setSelected(r.route_id)}
-                disabled={busy}
-              >
-                <div className="route-row-top">
-                  <span className="route-name">{r.display_name}</span>
-                  {fixture && (
-                    <span className="badge badge-fixture" title="Labeled fallback — not live">
-                      fixture
-                    </span>
-                  )}
-                </div>
-                <div className="route-row-meta mono">
-                  <span>{shortRouteId(r.route_id)}</span>
-                  <span>{r.segment_count ?? 0} segs</span>
-                  <span>{formatRouteLength(r.length_s)}</span>
-                </div>
-              </button>
-            );
-          })}
-      </div>
-
-
-      <details className="ingest-ssh-details" open={mode === "lan" || (!sshConfigured && mode !== "fixture")}>
-        <summary>SSH / LAN config</summary>
         <div className="ingest-ssh-row" aria-label="SSH configuration">
           <div className="ingest-ssh-grid">
             <input
@@ -907,23 +685,172 @@ export function IngestPane({
         </div>
       </details>
 
-      <div className="ingest-actions secondary-row fixture-last-resort">
-        <button
-          disabled={loading}
-          onClick={useFixture}
-          className="fixture-btn"
-          title="Labeled offline fallback only — not the happy path"
-        >
-          Show fixture (offline)
-        </button>
-        <button
-          className="fixture-btn"
-          disabled={busy || loading}
-          onClick={() => onIngest({ source: "fixture" })}
-          title="Labeled fixture ingest — last resort"
-        >
-          Ingest fixture (labeled)
-        </button>
+      {discoveredDevices.length > 0 && tab === "lan" && (
+        <div className="device-picks" aria-label="Discovered devices">
+          <span className="k">Devices</span>
+          <div className="device-pick-list">
+            {discoveredDevices.map((dev, i) => {
+              const id = String(dev.id ?? dev.name ?? i);
+              const kind = String(dev.kind ?? "device");
+              const online = dev.online !== false;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={`device-pick ${online ? "" : "off"}${pickedDevice === id ? " selected" : ""}`}
+                  disabled={busy || !online}
+                  aria-pressed={pickedDevice === id}
+                  title={`Select discovered ${kind}`}
+                  onClick={() => pickDevice(id)}
+                >
+                  <span className="device-pick-name">{String(dev.name ?? dev.id ?? "device")}</span>
+                  <span className="device-pick-kind mono">{kind}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {lanNote && <div className="ingest-note">{lanNote}</div>}
+
+      {listError && (
+        <div className="ingest-error">
+          Routes unavailable ({listError}). Is the API on :8000?
+        </div>
+      )}
+
+      {/* Routes are the hero */}
+      <div className="route-list" role="listbox" aria-label="routes">
+        {loading && (
+          <EmptyState
+            title={
+              tab === "lan"
+                ? "Scanning LAN…"
+                : tab === "public"
+                  ? "Loading public routes"
+                  : "Loading My Connect"
+            }
+            body={
+              tab === "lan"
+                ? "Looking for mici over ADB and SSH."
+                : tab === "public"
+                  ? "Shared & public drives from Connect — no local dongle required."
+                  : "Asking comma Connect for routes on your saved dongle."
+            }
+          />
+        )}
+        {!loading && !listError && routes.length === 0 && tab === "public" && (
+          <EmptyState
+            title={
+              emptyReason === "connect_not_configured" || emptyReason === "connect_unauthorized"
+                ? "Needs JWT"
+                : "No public routes"
+            }
+            body={
+              routesMessage ||
+              (emptyReason === "connect_not_configured" || emptyReason === "connect_unauthorized"
+                ? "Paste Connect JWT under Connection — honest empty until then."
+                : "No shared/public Connect hits for this account.")
+            }
+            hint="GET /routes?source=connect&scope=public"
+          />
+        )}
+        {!loading && !listError && routes.length === 0 && tab === "mine" && (
+          <EmptyState
+            title={
+              emptyReason === "dongle_id_required"
+                ? "Needs Dongle"
+                : dongle?.connect_available
+                  ? "No Connect routes"
+                  : "Needs JWT"
+            }
+            body={
+              routesMessage ||
+              (emptyReason === "dongle_id_required"
+                ? "Save Dongle under Connection, or use Public / SSH/ADB."
+                : dongle?.connect_available
+                  ? "Connect is up, but no routes for this dongle."
+                  : "Paste Connect JWT under Connection.")
+            }
+            hint="GET /routes?source=connect&scope=mine"
+          />
+        )}
+        {!loading && !listError && routes.length === 0 && tab === "lan" && (
+          <EmptyState
+            title={
+              listSource === "ssh" || sshConfigured || dongle?.ssh_available
+                ? "SSH · 0 routes"
+                : "Nothing on LAN yet"
+            }
+            body={
+              routesMessage ||
+              (listSource === "ssh" || sshConfigured || dongle?.ssh_available
+                ? "SSH ok · 0 routes under /data/media/0/realdata"
+                : "No ADB or SSH routes found — open Connection.")
+            }
+            hint={emptyReason ? `empty_reason=${emptyReason}` : "GET /routes?source=ssh"}
+            actions={
+              <>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void load("lan", pickedDevice)}
+                >
+                  Refresh
+                </button>
+                <button type="button" disabled={loading} onClick={() => void testSsh()}>
+                  Verify path
+                </button>
+              </>
+            }
+          />
+        )}
+        {!loading &&
+          routes.map((r) => {
+            const active = selected === r.route_id;
+            const fixture =
+              r.source === "fixture" ||
+              Boolean(r.meta?.fixture) ||
+              r.meta?.label === "fixture" ||
+              listSource === "fixture";
+            const scopeLabel =
+              r.meta?.scope === "shared"
+                ? "shared"
+                : r.meta?.scope === "public" || r.meta?.is_public
+                  ? "public"
+                  : null;
+            return (
+              <button
+                key={r.route_id}
+                type="button"
+                role="option"
+                aria-selected={active}
+                className={`route-row ${active ? "selected" : ""} ${fixture ? "is-fixture" : ""}`}
+                onClick={() => setSelected(r.route_id)}
+                disabled={busy}
+              >
+                <div className="route-row-top">
+                  <span className="route-name">{r.display_name}</span>
+                  {scopeLabel && (
+                    <span className="badge badge-scope" title={`${scopeLabel} Connect drive`}>
+                      {scopeLabel}
+                    </span>
+                  )}
+                  {fixture && (
+                    <span className="badge badge-fixture" title="Labeled fallback — not live">
+                      fixture
+                    </span>
+                  )}
+                </div>
+                <div className="route-row-meta mono">
+                  <span>{shortRouteId(r.route_id)}</span>
+                  <span>{r.segment_count ?? 0} segs</span>
+                  <span>{formatRouteLength(r.length_s)}</span>
+                </div>
+              </button>
+            );
+          })}
       </div>
 
       {(ingestActive || metrics.length > 0) && (

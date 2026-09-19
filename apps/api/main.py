@@ -94,22 +94,22 @@ class JobSummary(BaseModel):
 
 class IngestJobRequest(BaseModel):
     route_id: str | None = None
-    source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
+    source: Literal["auto", "connect", "public", "ssh", "fixture"] = "auto"
 
 
 class ShardJobRequest(BaseModel):
     route_id: str | None = None
-    source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
+    source: Literal["auto", "connect", "public", "ssh", "fixture"] = "auto"
 
 
 class TeachJobRequest(BaseModel):
     route_id: str | None = None
-    source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
+    source: Literal["auto", "connect", "public", "ssh", "fixture"] = "auto"
 
 
 class TrainJobRequest(BaseModel):
     route_id: str | None = None
-    source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
+    source: Literal["auto", "connect", "public", "ssh", "fixture"] = "auto"
 
 
 class ExportJobRequest(BaseModel):
@@ -128,14 +128,14 @@ class EvalJobRequest(BaseModel):
 class PipelineJobRequest(BaseModel):
     """Sequential teach→train→export→eval→(gated)flash for Expo simple-user path."""
     route_id: str | None = None
-    source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
+    source: Literal["auto", "connect", "public", "ssh", "fixture"] = "auto"
     include_flash: bool = True
 
 
 class TrainAllRequest(BaseModel):
     """One-click ingest→shard→teach→train→export→eval (never auto-flash)."""
     route_id: str | None = None
-    source: Literal["auto", "connect", "ssh", "fixture"] = "auto"
+    source: Literal["auto", "connect", "public", "ssh", "fixture"] = "auto"
     teacher: str | None = None
     allow_toy: bool = False
     force_fixture: bool = False
@@ -1509,7 +1509,7 @@ async def start_train_all(
 
 @app.get("/routes")
 async def get_routes(
-    source: Literal["auto", "connect", "ssh", "fixture"] = Query("auto"),
+    source: Literal["auto", "connect", "public", "ssh", "fixture"] = Query("auto"),
     limit: int = Query(20, ge=1, le=100),
     scope: Literal["mine", "public"] | None = Query(
         None,
@@ -1524,13 +1524,19 @@ async def get_routes(
         description="Override MICI_SSH_HOST for this listing (from discovery picker)",
     ),
 ) -> dict[str, Any]:
-    """List mici routes for the configured dongle (Connect / SSH / fixture).
+    """List routes for the Expo picker (Public / My Connect / SSH / fixture).
 
     After discovery, pass `device` and/or `ssh_host` (+ `source`) so the picker
     does not require shell env archaeology.
 
-    Explicit source=ssh|connect never silently swaps to fixture when empty/error —
-    response stays source=ssh|connect with routes=[] and message/empty_reason.
+    Picker sources (Jony):
+      - source=public  — shared/public Connect drives (JWT only; no dongle)
+      - source=connect — My Connect (saved dongle + JWT)
+      - source=ssh     — ADB/SSH when mici online
+      - source=fixture — labeled offline sample
+
+    Explicit source=ssh|connect|public never silently swaps to fixture when
+    empty/error — response stays that source with routes=[] and message/empty_reason.
 
     scope=public (+ source=connect|auto): shared/public Connect drives — JWT only,
     no local dongle, never queries demo id 3e2de7ed….
@@ -1568,7 +1574,7 @@ async def get_routes(
 @app.get("/routes/{route_id:path}")
 async def get_route_detail(
     route_id: str,
-    source: Literal["auto", "connect", "ssh", "fixture"] = Query("auto"),
+    source: Literal["auto", "connect", "public", "ssh", "fixture"] = Query("auto"),
 ) -> dict[str, Any]:
     from distillery_ingest.resolve import get_route as ingest_get_route
 
@@ -1576,7 +1582,7 @@ async def get_route_detail(
     try:
         src, route = ingest_get_route(route_id, cfg, prefer=source)
     except Exception as exc:  # noqa: BLE001 — explicit live sources must not 500 as fixture
-        if source in ("ssh", "connect"):
+        if source in ("ssh", "connect", "public"):
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         raise
     return {"source": src.name, "route": route.model_dump(mode="json")}

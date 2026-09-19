@@ -6,10 +6,14 @@
 
 | Prefer | When |
 |--------|------|
-| `connect` + `scope=public` | JWT only — shared (`is_owner=false`) + `is_public` routes via `/v1/me/devices` |
-| `connect` (`scope=mine`) | JWT + saved dongle → `/v1/devices/{dongle}/routes` |
+| `public` | `COMMA_JWT` set — shared/public Connect drives (no dongle required) |
+| `connect` | `COMMA_JWT` + saved dongle (My Connect); `scope=public` also lists shared/public |
+
 | `ssh` | `MICI_SSH_HOST` (+ optional `MICI_SSH_KEY`, `MICI_SSH_USER`) |
 | `fixture` | No creds, or `DISTILLERY_INGEST_FIXTURE=1` |
+
+Picker contract for Expo UI: `docs/routes-picker-contract.json` (Public routes | My Connect | SSH/ADB).
+Demo/fixture dongle `3e2de7ed673817c2` is hard-banned as a live query target / cache default.
 
 Fixture routes are **truthful-shaped** (Connect-like `route_id`, segments, per-cam hevc metadata) and labeled `meta.fixture` / `meta.label=fixture` with `placeholder=true` on samples.
 
@@ -45,7 +49,7 @@ distillery_ingest/
   models.py      # RouteInfo / SegmentInfo / CamSample
   resolve.py     # Connect → SSH → fixture
   pipeline.py    # emit DistilleryEvents
-  sources/       # connect.py, ssh.py, fixture.py
+  sources/       # connect.py, public.py, ssh.py, fixture.py
 fixtures/sample_route.json
 ```
 
@@ -61,6 +65,6 @@ fixtures/sample_route.json
 | `GET /discover/ssh` | SSH status (host/user/port/identity path; no key bytes) |
 | `POST /discover/ssh` | `{ "host", "user", "port", "identity_path?", "persist" }` → env + `.cache/ssh_config.json` |
 | `POST /discover/ssh/test` | Short SSH probe `{ ok, error }` (~5s timeout) |
-| `GET /routes?source=&device=&ssh_host=` | List routes using discovered device/source |
+| `GET /routes?source=public\|connect\|ssh\|fixture&device=&ssh_host=` | List routes (public = shared Connect; connect = My Connect) |
 
 Fixture remains the offline fallback and is labeled `meta.label=fixture`.

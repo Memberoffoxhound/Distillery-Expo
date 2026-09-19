@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 CamName = Literal["road", "wide", "driver", "other"]
-SourceName = Literal["connect", "ssh", "fixture"]
+SourceName = Literal["connect", "ssh", "public", "fixture"]
 
 
 class CamSample(BaseModel):

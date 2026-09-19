@@ -1,0 +1,99 @@
+{
+  "for": "Jony (UI) — one calm routes picker",
+  "purpose": "Browse/import when mici ADB/SSH is offline via Connect public/shared drives; My Connect when dongle saved; SSH/ADB when online. Never silent fixture. Never auto-query demo dongle 3e2de7ed673817c2.",
+  "picker_sources": [
+    {
+      "id": "public",
+      "label": "Public routes",
+      "request": "GET /routes?source=public&limit=20",
+      "when": "JWT saved; mici may be offline",
+      "requires": ["COMMA_JWT / POST /discover/connect"],
+      "does_not_require": ["dongle_id", "ADB", "SSH"],
+      "backend": "GET /v1/me/devices → GET /v1/devices/{dongle}/routes (shared is_owner=false; owned only if route is_public)",
+      "never_queries": "3e2de7ed673817c2"
+    },
+    {
+      "id": "connect",
+      "label": "My Connect",
+      "request": "GET /routes?source=connect&limit=20",
+      "when": "JWT + saved dongle id",
+      "requires": ["COMMA_JWT", "dongle via POST /dongle or ADB/SSH auto-hydrate"],
+      "backend": "GET /v1/devices/{dongle}/routes"
+    },
+    {
+      "id": "ssh",
+      "label": "SSH / ADB",
+      "request": "GET /routes?source=ssh&limit=20&device=&ssh_host=",
+      "when": "mici online (ADB or SSH configured)",
+      "requires": ["MICI_SSH_HOST or discovery device", "dongle_id for path under realdata"]
+    }
+  ],
+  "honest_empty": {
+    "public_no_jwt": {
+      "request": "GET /routes?source=public",
+      "expect": {
+        "source": "public",
+        "routes": [],
+        "empty_reason": "connect_not_configured",
+        "message": "Connect not configured · paste JWT then Save"
+      },
+      "never": "silent fixture routes"
+    },
+    "public_401": {
+      "request": "GET /routes?source=public",
+      "when": "JWT present but Connect returns 401/403",
+      "expect": {
+        "source": "public",
+        "routes": [],
+        "empty_reason": "connect_unauthorized"
+      }
+    },
+    "public_no_hits": {
+      "request": "GET /routes?source=public",
+      "when": "JWT OK, no shared/public routes",
+      "expect": {
+        "source": "public",
+        "routes": [],
+        "empty_reason": "empty_public",
+        "message": "Connect ok · 0 public/shared routes"
+      }
+    },
+    "connect_unset_dongle": {
+      "request": "GET /routes?source=connect",
+      "expect": {
+        "source": "connect",
+        "routes": [],
+        "empty_reason": "dongle_id_required"
+      }
+    }
+  },
+  "demo_dongle_ban": {
+    "id": "3e2de7ed673817c2",
+    "rule": "Hard-banned as live Connect/SSH query target and as default from env/.cache. Leftover demo in .cache/dongle_id is cleared and treated as unset.",
+    "fixture_ok": "GET /routes?source=fixture may still return labeled sample with this id (meta.label=fixture).",
+    "set_rejected": "POST /dongle with this id → 400"
+  },
+  "route_row_shape": {
+    "route_id": "string",
+    "dongle_id": "string",
+    "display_name": "string",
+    "source": "public | connect | ssh | fixture",
+    "segment_count": "number",
+    "meta": {
+      "label": "public | connect | ssh | fixture",
+      "fixture": false,
+      "shared": "boolean (public rows)",
+      "is_public": "boolean (public rows)",
+      "device_alias": "string | omit"
+    }
+  },
+  "bind": {
+    "tabs": ["Public routes", "My Connect", "SSH/ADB"],
+    "default_when_mici_offline": "public (if JWT) else connect gap / honest empty",
+    "after_jwt_save": "Refresh GET /routes?source=public",
+    "after_dongle_save": "Refresh GET /routes?source=connect",
+    "status_hint": "GET /dongle → public_available / connect_available / ssh_available"
+  },
+  "flash": "stays gated — unchanged",
+  "out_of_scope": ["apps/web rewrite (Jony)", "PyTorch swap"]
+}

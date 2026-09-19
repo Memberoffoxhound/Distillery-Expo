@@ -147,6 +147,10 @@ class ConnectRouteSource(RouteSource):
     def get_route(self, route_id: str) -> RouteInfo | None:
         dongle = sanitize_dongle_id(self.cfg.dongle_id)
         if not dongle:
+            if is_banned_demo_dongle(self.cfg.dongle_id):
+                raise RuntimeError(
+                    "demo dongle id is banned as a Connect query target — set a real id"
+                )
             return None
         # Canonical Connect route key is often fullname = dongle|date
         path = f"/v1/devices/{dongle}/routes/{route_id}"

@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 from distillery_ingest.config import (
+    DEMO_DONGLE_ID,
     IngestConfig,
     is_banned_demo_dongle,
     load_ingest_config,
-    sanitize_dongle_id,
     _REPO_ROOT,
 )
 
@@ -149,17 +149,17 @@ def _jwt_source() -> str | None:
 def ensure_dongle_from_cache() -> str | None:
     """If DISTILLERY_DONGLE_ID unset, load from .cache/dongle_id into process env.
 
-    Stale demo id in env/cache is cleared — never auto-query.
+    Stale demo dongle leftover is cleared and treated as unset — never auto-query.
     """
-    existing = os.environ.get("DISTILLERY_DONGLE_ID", "").strip()
+    existing = (os.environ.get("DISTILLERY_DONGLE_ID") or "").strip()
     if existing:
         if is_banned_demo_dongle(existing):
             os.environ.pop("DISTILLERY_DONGLE_ID", None)
             if _DONGLE_CACHE.is_file():
                 try:
                     _DONGLE_CACHE.unlink()
-                except OSError:
-                    pass
+                except OSError as exc:
+                    log.warning("failed clearing demo dongle cache: %s", exc)
             return None
         return existing
     if not _DONGLE_CACHE.is_file():
@@ -174,8 +174,8 @@ def ensure_dongle_from_cache() -> str | None:
     if is_banned_demo_dongle(cached):
         try:
             _DONGLE_CACHE.unlink()
-        except OSError:
-            pass
+        except OSError as exc:
+            log.warning("failed clearing demo dongle cache: %s", exc)
         return None
     os.environ.setdefault("DISTILLERY_DONGLE_ID", cached)
     return cached
@@ -192,7 +192,8 @@ def set_dongle_id(dongle_id: str, *, persist: bool = True) -> dict[str, Any]:
         raise ValueError("dongle_id must be a non-empty string")
     if is_banned_demo_dongle(value):
         raise ValueError(
-            "demo dongle 3e2de7ed… is banned — use Save with a real id or Auto from ADB/SSH"
+            f"demo dongle {DEMO_DONGLE_ID} is the labeled fixture/demo id — "
+            "refused (set a real mici id)"
         )
     os.environ["DISTILLERY_DONGLE_ID"] = value
     cached = False
@@ -240,6 +241,7 @@ def dongle_status(cfg: IngestConfig | None = None) -> dict[str, Any]:
         "cache_path": cache_path,
         "cams": list(cfg.cams),
         "connect_available": cfg.connect_available,
+        "public_available": cfg.public_available,
         "ssh_available": cfg.ssh_available,
         "force_fixture": cfg.force_fixture,
     }
@@ -566,7 +568,11 @@ def normalize_discovered_dongle_id(raw: str | None) -> str | None:
         return None
     if not _HEX_DONGLE_RE.match(value):
         return None
-    return value.lower()
+    value = value.lower()
+    # Hard-ban labeled fixture/demo id from discovery suggestions / auto-hydrate.
+    if is_banned_demo_dongle(value):
+        return None
+    return value
 
 
 def _is_mici_like_device(dev: dict[str, Any]) -> bool:

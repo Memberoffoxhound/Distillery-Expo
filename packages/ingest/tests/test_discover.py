@@ -238,7 +238,8 @@ def test_set_dongle_id_persist_and_status(tmp_path, monkeypatch):
 
 def test_normalize_discovered_dongle_id():
     assert normalize_discovered_dongle_id("AABBCCDDEEFF0011") == "aabbccddeeff0011"
-    assert normalize_discovered_dongle_id("3e2de7ed673817c2") == "3e2de7ed673817c2"
+    # Labeled demo/fixture id must never be suggested / auto-hydrated
+    assert normalize_discovered_dongle_id("3e2de7ed673817c2") is None
     assert normalize_discovered_dongle_id("UnregisteredDevice") is None
     assert normalize_discovered_dongle_id("") is None
     # ADB serial / short hex must not be treated as a dongle id

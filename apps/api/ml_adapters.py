@@ -818,11 +818,13 @@ def coerce_eval_passed(result: Any) -> bool:
 
 
 
-def probe_tinygrad() -> dict[str, Any]:
-    """Probe tinygrad Device — GPU or CPU; never 7090-locked.
 
+def probe_torch() -> dict[str, Any]:
+    """Probe PyTorch device — CUDA / ROCm / MPS / CPU; never 7090-locked.
+
+    Thin local fallback when distillery_student.probe_train_device is unavailable.
     Returns keys consumed by /health and /status/runtime:
-      tinygrad: "ok" | "missing" | "fixture"
+      torch: "ok" | "missing"
       device: { found, ready, kind, name, backend }
       mode: "live" | "fixture"
     """
@@ -834,123 +836,118 @@ def probe_tinygrad() -> dict[str, Any]:
         "backend": None,
     }
     try:
-        import tinygrad  # noqa: F401
-        from tinygrad import Device
+        import torch
     except Exception as exc:  # noqa: BLE001 — import OR init failures
         return {
-            "tinygrad": "missing",
+            "torch": "missing",
             "device": {**device_blank, "error": str(exc)[:200]},
             "mode": "fixture",
-            "detail": "tinygrad not importable — fixture mode",
+            "detail": "torch: missing — fixture mode (optional dep distillery-expo[torch])",
         }
 
-    backend = None
-    name = None
-    kind: str | None = "unknown"
-    ready = False
-    found = False
+    name = "cpu"
+    kind: str | None = "cpu"
     err: str | None = None
-
     try:
-        backend = str(getattr(Device, "DEFAULT", None) or "CPU")
-        found = True
-        name = backend
-        upper = backend.upper()
-        if any(tok in upper for tok in ("CUDA", "GPU", "HIP", "METAL", "CL", "OPENCL", "AMD", "NV", "INTEL", "QCOM", "VULKAN")):
-            # Exclude pure CPU tokens
-            if upper in ("CPU", "LLVM", "DSP"):
-                kind = "cpu"
+        hip = getattr(getattr(torch, "version", None), "hip", None)
+        if torch.cuda.is_available():
+            try:
+                idx = int(torch.cuda.current_device())
+            except Exception:  # noqa: BLE001
+                idx = 0
+            if hip:
+                name = "rocm" if idx == 0 else f"rocm:{idx}"
             else:
-                kind = "gpu"
-        elif upper in ("CPU", "LLVM", "DSP") or upper.startswith("CPU"):
-            kind = "cpu"
+                name = "cuda" if idx == 0 else f"cuda:{idx}"
+            kind = "gpu"
         else:
-            kind = "unknown"
-
-        # Touch the device to confirm readiness (best-effort; CPU always ok)
-        try:
-            # Device[backend] materializes; .renderer / stringification is enough signal
-            _dev = Device[backend]
-            ready = _dev is not None
-            # Prefer a richer name when available
-            name = str(getattr(_dev, "name", None) or backend)
-        except Exception as exc:  # noqa: BLE001
-            err = str(exc)[:200]
-            # Still "found" if DEFAULT resolved; readiness false
-            ready = False
-            if kind == "cpu":
-                # CPU backends are usually fine even if Device[] quirks
-                ready = True
+            mps = getattr(torch.backends, "mps", None)
+            if mps is not None and bool(mps.is_available()):
+                name = "mps"
+                kind = "gpu"
+            else:
+                name = "cpu"
+                kind = "cpu"
     except Exception as exc:  # noqa: BLE001
         err = str(exc)[:200]
-        found = False
-        ready = False
+        name = "cpu"
+        kind = "cpu"
 
     device = {
-        "found": found,
-        "ready": ready,
-        "kind": kind if found else None,
+        "found": True,
+        "ready": True,
+        "kind": kind,
         "name": name,
-        "backend": backend,
+        "backend": name,
+        "source": "torch",
     }
     if err:
         device["error"] = err
 
-    # Live when importable; fixture only when missing. CPU counts as live.
-    mode = "live" if found else "fixture"
-    tg = "ok" if found and ready else ("ok" if found else "missing")
-    if found and not ready:
-        tg = "ok"  # present but not ready — still not "missing"; UI can read device.ready
     return {
-        "tinygrad": tg if found else "missing",
+        "torch": "ok",
         "device": device,
-        "mode": mode if found else "fixture",
-        "detail": None,
+        "mode": "live",  # package present; CPU counts as live for the chip
+        "detail": f"torch device={name} kind={kind}",
     }
 
 
 def _device_from_student_probe(raw: dict[str, Any]) -> dict[str, Any]:
-    """Map Graig probe_train_device → /health device shape."""
-    return {
+    """Map Craig probe_train_device → /health device shape."""
+    backend = raw.get("device_name") or raw.get("backend")
+    out = {
         "found": bool(raw.get("device_found")),
         "ready": bool(raw.get("device_ready")),
         "kind": raw.get("device_kind"),
         "name": raw.get("device_name"),
-        "backend": raw.get("device_name") or raw.get("backend"),
+        "backend": backend,
         "detail": raw.get("detail"),
         "live": raw.get("live"),
-        "source": raw.get("source"),
+        "source": raw.get("source") or "torch",
     }
+    note = raw.get("tinygrad_note")
+    if note is not None:
+        out["tinygrad_note"] = note
+    return out
 
 
 def runtime_status() -> dict[str, Any]:
-    """Compose health/runtime payload — prefer Graig probe_train_device."""
+    """Compose health/runtime payload — PyTorch train device chip (Craig)."""
     try:
         from distillery_student import probe_train_device
 
         raw = probe_train_device()
-        tg = raw.get("tinygrad") or "missing"
-        mode = "fixture" if tg in ("missing", "fixture") else "live"
-        # CPU counts as live when tinygrad ok
-        if tg == "ok":
-            mode = "live"
-        return {
+        torch_status = raw.get("torch") or "missing"
+        # CPU counts as live when torch ok; missing → fixture / gap
+        mode = "live" if torch_status == "ok" else "fixture"
+        note = raw.get("tinygrad_note")
+        # tinygrad key is leftover-only (not train). Prefer torch for the device chip.
+        if isinstance(note, dict):
+            leftover_tg = note.get("status") or "ok"
+        else:
+            leftover_tg = "missing"
+        payload: dict[str, Any] = {
             "ok": True,
-            "tinygrad": tg,
+            "torch": torch_status,
             "device": _device_from_student_probe(raw),
             "mode": mode,
             "ml_backends": backend_status(),
             "detail": raw.get("detail"),
             "probe": "distillery_student.probe_train_device",
+            # Leftover package presence only — train backend is torch
+            "tinygrad": leftover_tg,
         }
+        if isinstance(note, dict):
+            payload["tinygrad_note"] = note
+        return payload
     except Exception as exc:  # noqa: BLE001
-        tg = probe_tinygrad()
+        pt = probe_torch()
         return {
             "ok": True,
-            "tinygrad": tg["tinygrad"],
-            "device": tg["device"],
-            "mode": tg["mode"],
+            "torch": pt["torch"],
+            "device": pt["device"],
+            "mode": pt["mode"],
             "ml_backends": backend_status(),
-            "detail": tg.get("detail") or f"student probe unavailable: {exc}"[:200],
+            "detail": pt.get("detail") or f"student probe unavailable: {exc}"[:200],
             "probe": "local_thin",
         }

@@ -13,11 +13,11 @@ def _ready_cpu_probe(*, force_fixture: bool = False):
         "device_ready": True,
         "device_kind": "cpu",
         "device_name": "CPU",
-        "tinygrad": "ok",
+        "torch": "ok",
         "live": False,
-        "source": "tinygrad",
+        "source": "torch",
         "data_source": "fixture" if force_fixture else "live",
-        "detail": "tinygrad Device.DEFAULT=CPU kind=cpu",
+        "detail": "torch device=cpu kind=cpu",
     }
 
 
@@ -27,7 +27,7 @@ def client(monkeypatch):
     monkeypatch.setenv("DISTILLERY_ALLOW_TOY_TRAIN", "1")
     monkeypatch.delenv("COMMA_JWT", raising=False)
     monkeypatch.delenv("CONNECT_JWT", raising=False)
-    # allow_toy+/ready tests expect ok without requiring a live GPU or tinygrad
+    # allow_toy+/ready tests expect ok without requiring a live GPU or torch
     monkeypatch.setattr(
         "distillery_student.readiness.probe_train_device", _ready_cpu_probe
     )
@@ -97,4 +97,5 @@ def test_health_has_device(client):
     assert r.status_code == 200
     data = r.json()
     assert data["ok"] is True
-    assert "tinygrad" in data and "device" in data and "mode" in data
+    assert "torch" in data and "device" in data and "mode" in data
+    assert data["torch"] in ("ok", "missing")

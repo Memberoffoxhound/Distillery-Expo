@@ -1135,19 +1135,25 @@ async def _run_teacher_pull_job(
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    """Liveness + tinygrad-compatible device status (GPU or CPU; not 7090-locked)."""
+    """Liveness + PyTorch device status (CUDA / ROCm / MPS / CPU; not 7090-locked)."""
     rt = runtime_status()
-    return {
+    out = {
         "ok": True,
         "status": "ok",
         "service": "distillery-expo",
-        "tinygrad": rt["tinygrad"],
+        "torch": rt.get("torch"),
         "device": rt["device"],
         "mode": rt["mode"],
         "ml_backends": rt["ml_backends"],
         "probe": rt.get("probe"),
         "detail": rt.get("detail"),
     }
+    # Leftover tinygrad presence only (not train backend)
+    if "tinygrad" in rt:
+        out["tinygrad"] = rt["tinygrad"]
+    if rt.get("tinygrad_note") is not None:
+        out["tinygrad_note"] = rt["tinygrad_note"]
+    return out
 
 
 @app.get("/status/runtime")
@@ -1383,7 +1389,7 @@ async def get_ready(
     allow_toy: bool = Query(False),
     force_fixture: bool = Query(False),
 ) -> dict[str, Any]:
-    """Structured train-all readiness gaps (mici/connect/hours/tinygrad/teacher)."""
+    """Structured train-all readiness gaps (mici/connect/hours/torch/teacher)."""
     # Enrich Graig gaps with mici/connect when discover is available
     report = check_train_readiness(
         teacher_name=teacher,

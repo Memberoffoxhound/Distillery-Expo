@@ -152,8 +152,9 @@ from distillery_teacher import (
 )
 ```
 
-`probe_train_device()` → `{device_found, device_ready, device_kind, device_name, tinygrad}`
-(`tinygrad` ∈ ok|missing|fixture; not 7090-locked).
+`probe_train_device()` → `{device_found, device_ready, device_kind, device_name, torch}`
+(`torch` ∈ ok|missing; device_name ∈ cuda|rocm|mps|cpu; not 7090-locked).
+Optional: `pip install 'distillery-expo[torch]'` (CPU wheels by default).
 
 `list_comma_master_teachers()` with explicit `force_fixture` / `DISTILLERY_TEACHER_FIXTURE`
 → `source=fixture` teachers (no Chestnut). Default prefers live listing + cache.

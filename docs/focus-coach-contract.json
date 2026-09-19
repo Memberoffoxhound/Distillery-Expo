@@ -1,0 +1,46 @@
+{
+  "for": "Graig (LLM coach backend) + Jony (UI)",
+  "purpose": "Thin coach contract: plain-English training focus → stored history; deepen into LLM coach later",
+  "status": "stub — UI ships first; Graig deepens mapping / retrain",
+  "cache": ".cache/focus_history.json",
+  "endpoints": {
+    "GET /focus": {
+      "response_200": {
+        "focus": "string | null — current focus text",
+        "history": [
+          {
+            "text": "string",
+            "ts": "ISO-8601",
+            "id": "uuid"
+          }
+        ]
+      },
+      "notes": "history newest-first. Empty focus/history when unset."
+    },
+    "POST /focus": {
+      "body": {
+        "focus": "plain English e.g. stop lights, stop signs, cut-ins",
+        "persist": true
+      },
+      "response_200": {
+        "focus": "string",
+        "history": "same shape as GET — newest first"
+      },
+      "notes": "Stores focus + prepends history entry in .cache/focus_history.json. Coach contract for Graig to deepen (LLM → training focus / retrain)."
+    }
+  },
+  "train_binding": {
+    "POST /jobs/train_all": {
+      "optional_body_field": "focus",
+      "notes": "When set, passed through to train stage via _call_stage if runner accepts it; also persisted as current focus."
+    },
+    "POST /jobs/train": {
+      "optional_body_field": "focus",
+      "notes": "Same optional pass-through."
+    }
+  },
+  "ui": {
+    "pane": "Focus near Train — What should we get better at?",
+    "actions": ["Submit focus", "history chips newest-first", "Start training passes focus"]
+  }
+}

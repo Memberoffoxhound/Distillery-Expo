@@ -278,6 +278,7 @@ export function useJobStream() {
       forceFixture?: boolean;
       allowToy?: boolean;
       teacher?: string | null;
+      focus?: string | null;
     }) => {
       await beginJob("train_all", () =>
         startTrainAllJob({
@@ -286,6 +287,7 @@ export function useJobStream() {
           force_fixture: opts?.forceFixture ?? false,
           allow_toy: opts?.allowToy ?? false,
           teacher: opts?.teacher ?? null,
+          focus: opts?.focus ?? null,
         })
       );
     },

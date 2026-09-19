@@ -40,6 +40,8 @@ from distillery_shards import run_shard_pipeline
 from distillery_student import check_train_readiness, probe_train_device
 from distillery_teacher import list_comma_master_teachers, select_comma_master_teacher
 
+from api.focus_store import load_focus, save_focus
+
 import inspect
 
 
@@ -110,6 +112,7 @@ class TeachJobRequest(BaseModel):
 class TrainJobRequest(BaseModel):
     route_id: str | None = None
     source: Literal["auto", "connect", "public", "ssh", "fixture"] = "auto"
+    focus: str | None = None
 
 
 class ExportJobRequest(BaseModel):
@@ -139,6 +142,7 @@ class TrainAllRequest(BaseModel):
     teacher: str | None = None
     allow_toy: bool = False
     force_fixture: bool = False
+    focus: str | None = None
 
 
 class TeacherPullRequest(BaseModel):
@@ -166,6 +170,12 @@ class SshConfigRequest(BaseModel):
 class DongleIdRequest(BaseModel):
     """Set mici dongle id without DISTILLERY_DONGLE_ID scavenger hunt."""
     dongle_id: str = Field(..., min_length=1)
+    persist: bool = True
+
+
+class FocusRequest(BaseModel):
+    """Plain-English training focus — coach contract stub for Graig."""
+    focus: str = Field(..., min_length=1)
     persist: bool = True
 
 
@@ -440,6 +450,7 @@ async def _run_train_job(
     *,
     route_id: str | None = None,
     prefer: str = "auto",
+    focus: str | None = None,
 ) -> None:
     job = _jobs[job_id]
     job.status = "running"
@@ -455,6 +466,7 @@ async def _run_train_job(
             route_id=route_id,
             prefer=prefer if prefer in ("auto", "live", "fixture") else "auto",
             tick=0.08,
+            focus=focus,
         )
         if route_id:
             job.route_id = route_id
@@ -760,6 +772,7 @@ async def _run_train_all_job(
     *,
     route_id: str | None = None,
     prefer: str = "auto",
+    focus: str | None = None,
 ) -> None:
     """ingest → shard → teach → train → export → eval. Never flashes."""
     job = _jobs[job_id]
@@ -833,7 +846,13 @@ async def _run_train_all_job(
             resolve_teach(), job_id, emit, route_id=rid, prefer=prefer_ml, tick=0.06
         )
         await _call_stage(
-            resolve_train(), job_id, emit, route_id=rid, prefer=prefer_ml, tick=0.06
+            resolve_train(),
+            job_id,
+            emit,
+            route_id=rid,
+            prefer=prefer_ml,
+            tick=0.06,
+            focus=focus,
         )
         export_result = await _call_stage(
             resolve_export(), job_id, emit, route_id=rid, tick=0.06
@@ -1225,6 +1244,22 @@ async def post_dongle(body: DongleIdRequest) -> dict[str, Any]:
 
 
 
+
+@app.get("/focus")
+async def get_focus() -> dict[str, Any]:
+    """Current training focus + history (newest first). Coach stub for Graig."""
+    return load_focus()
+
+
+@app.post("/focus")
+async def post_focus(body: FocusRequest) -> dict[str, Any]:
+    """Store plain-English focus + history in .cache/focus_history.json."""
+    try:
+        return save_focus(body.focus, persist=body.persist)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/discover")
 async def discover_all() -> dict[str, Any]:
     """Combined discovery snapshot: ADB devices + Connect + SSH + fixture label."""
@@ -1498,11 +1533,23 @@ async def start_train_all(
     )
     _jobs[job_id] = rec
     _subscribers[job_id] = []
+    focus_text = (body.focus or "").strip() or None
+    if focus_text:
+        try:
+            save_focus(focus_text, persist=True)
+        except ValueError:
+            pass
+    elif not focus_text:
+        # Prefer stored coach focus when client omits the field
+        stored = load_focus().get("focus")
+        focus_text = str(stored).strip() if stored else None
+
     background_tasks.add_task(
         _run_train_all_job,
         job_id,
         route_id=body.route_id,
         prefer=body.source,
+        focus=focus_text,
     )
     return _summary(rec)
 
@@ -1695,11 +1742,22 @@ async def start_train(
     )
     _jobs[job_id] = rec
     _subscribers[job_id] = []
+    focus_text = (body.focus or "").strip() or None
+    if focus_text:
+        try:
+            save_focus(focus_text, persist=True)
+        except ValueError:
+            pass
+    elif not focus_text:
+        stored = load_focus().get("focus")
+        focus_text = str(stored).strip() if stored else None
+
     background_tasks.add_task(
         _run_train_job,
         job_id,
         route_id=body.route_id,
         prefer=body.source,
+        focus=focus_text,
     )
     return _summary(rec)
 

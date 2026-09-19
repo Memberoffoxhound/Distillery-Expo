@@ -1505,6 +1505,10 @@ async def start_train_all(
 async def get_routes(
     source: Literal["auto", "connect", "ssh", "fixture"] = Query("auto"),
     limit: int = Query(20, ge=1, le=100),
+    scope: Literal["mine", "public"] | None = Query(
+        None,
+        description="connect scope: mine (dongle) or public (shared/public drives via /v1/me/devices)",
+    ),
     device: str | None = Query(
         None,
         description="Discovered ADB device id (serial or host:port); may set SSH host",
@@ -1521,17 +1525,27 @@ async def get_routes(
 
     Explicit source=ssh|connect never silently swaps to fixture when empty/error —
     response stays source=ssh|connect with routes=[] and message/empty_reason.
+
+    scope=public (+ source=connect|auto): shared/public Connect drives — JWT only,
+    no local dongle, never queries demo id 3e2de7ed….
     """
     cfg = apply_discovered_overrides(
         load_ingest_config(),
         ssh_host=ssh_host,
         device_id=device,
     )
-    result = ingest_list_routes(cfg, prefer=source, limit=limit)
+    result = ingest_list_routes(cfg, prefer=source, limit=limit, scope=scope)
     src, routes = result
+    effective_scope = scope
+    if effective_scope is None and source in ("connect", "auto"):
+        if any((r.meta or {}).get("scope") in ("public", "shared") for r in routes):
+            effective_scope = "public"
+        else:
+            effective_scope = "mine"
     out: dict[str, Any] = {
-        "dongle_id": cfg.dongle_id,
+        "dongle_id": cfg.dongle_id or None,
         "source": src.name,
+        "scope": effective_scope,
         "device": device,
         "ssh_host": cfg.ssh_host,
         "routes": [r.summary_dict() for r in routes],

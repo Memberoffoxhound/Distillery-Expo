@@ -4,6 +4,14 @@ const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 
 export type RouteSource = "auto" | "connect" | "ssh" | "fixture";
 
+/** Labeled fixture sample only — never Save / auto-query as live dongle. */
+export const DEMO_DONGLE_ID = "3e2de7ed673817c2";
+
+export function isBannedDemoDongle(id: string | null | undefined): boolean {
+  return (id || "").trim().toLowerCase() === DEMO_DONGLE_ID;
+}
+
+
 export interface RouteSummary {
   route_id: string;
   dongle_id: string;
@@ -16,9 +24,13 @@ export interface RouteSummary {
   meta?: Record<string, unknown>;
 }
 
+export type ConnectScope = "mine" | "public";
+
 export interface RoutesResponse {
-  dongle_id: string;
+  dongle_id: string | null;
   source: string;
+  /** mine = saved dongle; public = shared/public Connect drives */
+  scope?: ConnectScope | string | null;
   device?: string | null;
   ssh_host?: string | null;
   routes: RouteSummary[];
@@ -794,11 +806,16 @@ export function formatTeacherLabel(info: TeacherInfo | null): {
 export function fetchRoutes(
   source: RouteSource = "auto",
   limit = 20,
-  opts?: { device?: string | null; ssh_host?: string | null }
+  opts?: {
+    device?: string | null;
+    ssh_host?: string | null;
+    scope?: ConnectScope | null;
+  }
 ): Promise<RoutesResponse> {
   const q = new URLSearchParams({ source, limit: String(limit) });
   if (opts?.device) q.set("device", opts.device);
   if (opts?.ssh_host) q.set("ssh_host", opts.ssh_host);
+  if (opts?.scope) q.set("scope", opts.scope);
   return jsonFetch(`/routes?${q}`);
 }
 

@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from distillery_ingest.config import IngestConfig
+from distillery_ingest.config import IngestConfig, is_banned_demo_dongle, sanitize_dongle_id
 from distillery_ingest.models import RouteInfo, SegmentInfo
 from distillery_ingest.sources.base import RouteSource
 
@@ -54,8 +54,13 @@ class ConnectRouteSource(RouteSource):
 
         Primary endpoint shape: GET /v1/devices/{dongle}/routes
         (falls back gracefully on HTTP errors — caller should use fixture).
+        Never queries the banned demo dongle id.
         """
-        dongle = self.cfg.dongle_id
+        dongle = sanitize_dongle_id(self.cfg.dongle_id)
+        if not dongle:
+            if is_banned_demo_dongle(self.cfg.dongle_id):
+                raise RuntimeError("demo dongle banned · set a real Dongle ID")
+            raise RuntimeError("Dongle ID required · set via GUI Save")
         data = self._get(f"/v1/devices/{dongle}/routes?limit={limit}")
         rows = data if isinstance(data, list) else data.get("routes") or data.get("data") or []
         out: list[RouteInfo] = []
@@ -65,8 +70,84 @@ class ConnectRouteSource(RouteSource):
             out.append(self._map_route(row, segments=False))
         return out
 
+    def list_devices(self) -> list[dict[str, Any]]:
+        """GET /v1/me/devices — owned + shared/readable devices for the JWT user."""
+        data = self._get("/v1/me/devices")
+        rows = data if isinstance(data, list) else data.get("devices") or data.get("data") or []
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if isinstance(row, dict) and row.get("dongle_id"):
+                out.append(row)
+        return out
+
+    def list_public_routes(self, *, limit: int = 20) -> list[RouteInfo]:
+        """Browse shared/public Connect drives without a local mici dongle.
+
+        Uses GET /v1/me/devices then per-device routes. Includes:
+        - routes on shared (non-owner) devices
+        - routes marked is_public on any accessible device
+        Never queries the banned demo dongle id.
+        """
+        if not self.cfg.connect_jwt:
+            raise RuntimeError("Connect not configured · paste JWT then Save")
+        devices = self.list_devices()
+        # Prefer shared devices first, then owned (for public-flagged routes)
+        shared = [d for d in devices if d.get("is_owner") is False]
+        owned = [d for d in devices if d.get("is_owner") is not False]
+        ordered = shared + owned
+
+        collected: list[RouteInfo] = []
+        seen: set[str] = set()
+        per_device = max(5, min(20, limit))
+
+        for device in ordered:
+            if len(collected) >= limit:
+                break
+            dongle = sanitize_dongle_id(str(device.get("dongle_id") or ""))
+            if not dongle:
+                continue
+            is_shared = device.get("is_owner") is False
+            try:
+                data = self._get(f"/v1/devices/{dongle}/routes?limit={per_device}")
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code if exc.response is not None else 0
+                if status in (401, 403):
+                    raise
+                log.warning("public list skip device %s: %s", dongle[:8], exc)
+                continue
+            except Exception as exc:  # noqa: BLE001
+                log.warning("public list skip device %s: %s", dongle[:8], exc)
+                continue
+            rows = data if isinstance(data, list) else data.get("routes") or data.get("data") or []
+            alias = str(device.get("alias") or dongle[:8])
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                is_public = bool(row.get("is_public"))
+                if not (is_shared or is_public):
+                    continue
+                route = self._map_route(row, segments=False, dongle_override=dongle)
+                if route.route_id in seen:
+                    continue
+                seen.add(route.route_id)
+                scope = "shared" if is_shared else "public"
+                route.meta = {
+                    **(route.meta or {}),
+                    "scope": scope,
+                    "label": "connect_public",
+                    "device_alias": alias,
+                    "is_public": is_public,
+                    "is_shared": is_shared,
+                }
+                collected.append(route)
+                if len(collected) >= limit:
+                    break
+        return collected[:limit]
+
     def get_route(self, route_id: str) -> RouteInfo | None:
-        dongle = self.cfg.dongle_id
+        dongle = sanitize_dongle_id(self.cfg.dongle_id)
+        if not dongle:
+            return None
         # Canonical Connect route key is often fullname = dongle|date
         path = f"/v1/devices/{dongle}/routes/{route_id}"
         try:
@@ -78,12 +159,19 @@ class ConnectRouteSource(RouteSource):
             return None
         return self._map_route(data, segments=True)
 
-    def _map_route(self, row: dict[str, Any], *, segments: bool) -> RouteInfo:
+    def _map_route(
+        self,
+        row: dict[str, Any],
+        *,
+        segments: bool,
+        dongle_override: str | None = None,
+    ) -> RouteInfo:
+        dongle = dongle_override or sanitize_dongle_id(self.cfg.dongle_id) or (self.cfg.dongle_id or "")
         route_id = str(
             row.get("fullname")
             or row.get("route_id")
             or row.get("name")
-            or f"{self.cfg.dongle_id}|unknown"
+            or f"{dongle}|unknown"
         )
         segs: list[SegmentInfo] = []
         if segments:
@@ -101,7 +189,7 @@ class ConnectRouteSource(RouteSource):
         length = row.get("length") or row.get("length_s") or row.get("duration")
         return RouteInfo(
             route_id=route_id,
-            dongle_id=str(row.get("dongle_id") or self.cfg.dongle_id),
+            dongle_id=str(row.get("dongle_id") or dongle),
             display_name=str(row.get("display_name") or route_id.split("|")[-1]),
             source="connect",
             start_time=_iso(row.get("start_time") or row.get("starttime")),

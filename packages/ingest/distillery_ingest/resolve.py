@@ -16,6 +16,7 @@ from distillery_ingest.sources.ssh import REALDATA, SshRouteSource
 log = logging.getLogger(__name__)
 
 SourcePreference = Literal["auto", "connect", "ssh", "fixture"]
+ConnectScope = Literal["mine", "public"]
 
 # Explicit prefer=ssh|connect must never silently swap to fixture.
 _EXPLICIT_LIVE = frozenset({"ssh", "connect"})
@@ -90,11 +91,23 @@ def _connect_empty_message(cfg: IngestConfig, *, error: str | None = None) -> tu
     return "Connect ok · 0 routes for this dongle", "empty_connect"
 
 
+def _public_empty_message(cfg: IngestConfig, *, error: str | None = None) -> tuple[str, str]:
+    if error:
+        low = error.lower()
+        if "401" in low or "403" in low or "unauthorized" in low or "forbidden" in low:
+            return f"Connect auth failed · {error}", "connect_unauthorized"
+        return f"Connect error · {error}", "connect_error"
+    if not cfg.connect_jwt:
+        return "Connect not configured · paste JWT then Save", "connect_not_configured"
+    return "Connect ok · 0 public/shared routes", "empty_public"
+
+
 def list_routes(
     cfg: IngestConfig | None = None,
     *,
     prefer: SourcePreference = "auto",
     limit: int = 20,
+    scope: ConnectScope | None = None,
 ) -> ListRoutesResult:
     """Resolve source and list routes.
 
@@ -102,8 +115,47 @@ def list_routes(
     or error — return honest empty + message/empty_reason/error.
     Missing dongle on Connect/SSH → dongle_id_required (not fixture dongle).
     prefer=auto (and missing creds): still falls back to labeled fixture.
+
+    scope=public (with prefer=connect|auto): list shared/public Connect drives
+    via /v1/me/devices — JWT only, no local dongle, never demo id.
     """
     cfg = cfg or load_ingest_config()
+    want_public = scope == "public" and prefer in ("connect", "auto") and not cfg.force_fixture
+
+    # Public/shared Connect browse — JWT only; honest empty on missing JWT / 401
+    if want_public:
+        connect = ConnectRouteSource(cfg)
+        if not cfg.connect_jwt:
+            msg, reason = _public_empty_message(cfg)
+            return ListRoutesResult(
+                source=connect,
+                routes=[],
+                message=msg,
+                empty_reason=reason,
+            )
+        try:
+            routes = connect.list_public_routes(limit=limit)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("connect public list_routes failed: %s — honest empty", exc)
+            err = str(exc).strip() or type(exc).__name__
+            msg, reason = _public_empty_message(cfg, error=err)
+            return ListRoutesResult(
+                source=connect,
+                routes=[],
+                message=msg,
+                empty_reason=reason,
+                error=err,
+            )
+        if routes:
+            return ListRoutesResult(source=connect, routes=routes)
+        msg, reason = _public_empty_message(cfg)
+        return ListRoutesResult(
+            source=connect,
+            routes=[],
+            message=msg,
+            empty_reason=reason,
+        )
+
     # force_fixture already handled inside resolve_source
     source = resolve_source(cfg, prefer=prefer)
     explicit = prefer in _EXPLICIT_LIVE and not cfg.force_fixture

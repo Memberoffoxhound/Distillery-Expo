@@ -1,6 +1,13 @@
 """Distillery Expo M1 — mici route ingest (Connect / SSH / fixture)."""
 
-from .config import IngestConfig, load_ingest_config
+from .config import (
+    IngestConfig,
+    DEMO_DONGLE_ID,
+    FIXTURE_DONGLE_ID,
+    is_banned_demo_dongle,
+    load_ingest_config,
+    sanitize_dongle_id,
+)
 from .discover import (
     connect_status,
     discover_suggested_dongle_id,
@@ -20,6 +27,10 @@ from .resolve import list_routes, resolve_source
 
 __all__ = [
     "IngestConfig",
+    "DEMO_DONGLE_ID",
+    "FIXTURE_DONGLE_ID",
+    "is_banned_demo_dongle",
+    "sanitize_dongle_id",
     "load_ingest_config",
     "CamSample",
     "RouteInfo",

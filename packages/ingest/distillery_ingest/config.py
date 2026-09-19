@@ -17,8 +17,23 @@ _DONGLE_CACHE = _REPO_ROOT / ".cache" / "dongle_id"
 
 DEFAULT_CAMS = ("road", "wide", "driver")
 
-# Labeled fixture / sample-route id only — never a silent user-facing default.
+# Labeled fixture / sample-route id only — never a silent user-facing default
+# and never a Connect/SSH query target (stale demo leftover in .cache).
 FIXTURE_DONGLE_ID = "3e2de7ed673817c2"
+DEMO_DONGLE_ID = FIXTURE_DONGLE_ID  # alias — hard-banned from live query targets
+
+
+def is_banned_demo_dongle(dongle_id: str | None) -> bool:
+    """True for the labeled fixture/demo id — must never be auto-queried live."""
+    return (dongle_id or "").strip().lower() == DEMO_DONGLE_ID.lower()
+
+
+def sanitize_dongle_id(dongle_id: str | None) -> str:
+    """Return dongle id for live use, or "" if empty / banned demo leftover."""
+    value = (dongle_id or "").strip()
+    if not value or is_banned_demo_dongle(value):
+        return ""
+    return value
 
 
 @dataclass(frozen=True)
@@ -40,8 +55,13 @@ class IngestConfig:
 
     @property
     def connect_available(self) -> bool:
-        """Connect is live only with JWT + saved dongle (no demo default)."""
+        """Connect (My Connect) is live only with JWT + saved dongle (no demo default)."""
         return bool(self.connect_jwt) and self.dongle_configured and not self.force_fixture
+
+    @property
+    def public_available(self) -> bool:
+        """Public/shared Connect listing needs JWT only (no dongle / no demo query)."""
+        return bool(self.connect_jwt) and not self.force_fixture
 
     @property
     def ssh_available(self) -> bool:
@@ -56,17 +76,41 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _clear_demo_dongle_cache() -> None:
+    """Drop leftover demo id from .cache so it cannot revive as a default."""
+    if not _DONGLE_CACHE.is_file():
+        return
+    try:
+        cached = _DONGLE_CACHE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return
+    if is_banned_demo_dongle(cached):
+        try:
+            _DONGLE_CACHE.unlink()
+        except OSError:
+            pass
+
+
 def _hydrate_dongle_from_cache() -> str | None:
-    """If DISTILLERY_DONGLE_ID unset, load from .cache/dongle_id into process env."""
-    if os.environ.get("DISTILLERY_DONGLE_ID", "").strip():
-        return os.environ.get("DISTILLERY_DONGLE_ID", "").strip()
+    """If DISTILLERY_DONGLE_ID unset, load from .cache/dongle_id into process env.
+
+    Stale demo id in cache is ignored and cleared — never auto-query.
+    """
+    existing = os.environ.get("DISTILLERY_DONGLE_ID", "").strip()
+    if existing:
+        if is_banned_demo_dongle(existing):
+            os.environ.pop("DISTILLERY_DONGLE_ID", None)
+            _clear_demo_dongle_cache()
+            return None
+        return existing
     if not _DONGLE_CACHE.is_file():
         return None
     try:
         cached = _DONGLE_CACHE.read_text(encoding="utf-8").strip()
     except OSError:
         return None
-    if not cached:
+    if not cached or is_banned_demo_dongle(cached):
+        _clear_demo_dongle_cache()
         return None
     os.environ.setdefault("DISTILLERY_DONGLE_ID", cached)
     return cached
@@ -85,13 +129,16 @@ def load_ingest_config(config_path: Path | str | None = None) -> IngestConfig:
     cams_raw = mici.get("cams") or list(DEFAULT_CAMS)
     cams = tuple(str(c) for c in cams_raw)
 
-    dongle = (os.environ.get("DISTILLERY_DONGLE_ID") or "").strip()
+    # Demo leftover in env/cache/YAML → treat as unset (never auto-query).
+    if is_banned_demo_dongle(os.environ.get("DISTILLERY_DONGLE_ID")):
+        os.environ.pop("DISTILLERY_DONGLE_ID", None)
+        _clear_demo_dongle_cache()
+    dongle = sanitize_dongle_id(os.environ.get("DISTILLERY_DONGLE_ID"))
     if not dongle:
-        dongle = (_hydrate_dongle_from_cache() or "").strip()
+        dongle = sanitize_dongle_id(_hydrate_dongle_from_cache())
     if not dongle:
         # Optional operator override in YAML — empty / omitted means unset (not demo).
-        yaml_dongle = str(raw.get("dongle_id") or "").strip()
-        dongle = yaml_dongle
+        dongle = sanitize_dongle_id(str(raw.get("dongle_id") or ""))
 
     # Prefer env; else hydrate from .cache/connect_jwt (set via POST /discover/connect)
     jwt = os.environ.get("COMMA_JWT") or os.environ.get("CONNECT_JWT") or None

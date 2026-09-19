@@ -196,7 +196,7 @@ def test_check_train_readiness_reports_gaps(monkeypatch, tmp_path):
             "device_found": True,
             "device_ready": True,
             "device_kind": "cpu",
-            "device_name": "CPU",
+            "device_name": "cpu",
             "torch": "ok",
             "live": False,
             "source": "torch",
@@ -272,7 +272,7 @@ def test_check_train_readiness_missing_live_cache_is_gap(monkeypatch, tmp_path):
             "device_found": True,
             "device_ready": True,
             "device_kind": "cpu",
-            "device_name": "CPU",
+            "device_name": "cpu",
             "torch": "ok",
             "live": True,
             "source": "torch",
@@ -328,3 +328,29 @@ def test_ingest_fixture_does_not_force_student_config(monkeypatch):
     monkeypatch.setenv("DISTILLERY_INGEST_FIXTURE", "1")
     cfg = load_student_config()
     assert cfg.force_fixture is False
+
+
+def test_pytorch_distill_backend():
+    """Happy path uses pytorch when torch is installed (CPU OK)."""
+    from distillery_student.train_loop import run_distill_steps
+
+    records = run_distill_steps(steps=3, lr=1e-3)
+    assert len(records) == 3
+    try:
+        import torch  # noqa: F401
+
+        assert records[0]["backend"] == 1.0
+        assert records[-1]["train_loss"] >= 0.0
+    except ImportError:
+        assert records[0]["backend"] == 0.0
+
+
+def test_probe_exports_backend_pytorch():
+    """Phil/Craig contract: backend=pytorch + torch ok|missing + cuda/rocm/mps/cpu."""
+    info = probe_train_device()
+    assert info.get("backend") == "pytorch"
+    assert info["torch"] in ("ok", "missing")
+    if info["torch"] == "ok":
+        assert info["device_name"] in ("cuda", "mps", "cpu") or info["device_name"].startswith(
+            ("cuda:", "rocm")
+        )

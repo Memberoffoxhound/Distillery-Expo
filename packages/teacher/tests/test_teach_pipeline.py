@@ -81,3 +81,20 @@ def test_ingest_fixture_does_not_force_teacher_config(monkeypatch):
     monkeypatch.setenv("DISTILLERY_INGEST_FIXTURE", "1")
     cfg = load_teacher_config()
     assert cfg.force_fixture is False
+
+
+def test_soft_targets_pytorch_or_pure():
+    from distillery_teacher.soft_label_torch import generate_soft_targets, probe_teach_device
+
+    targets, backend = generate_soft_targets(n_samples=4, seed=0)
+    assert backend in ("pytorch", "pure-python")
+    assert "desire_logits" in targets
+    assert len(targets["desire_logits"]) == 4
+    probe = probe_teach_device(force_fixture=True)
+    assert probe.get("backend") == "pytorch"
+    assert probe["torch"] in ("ok", "missing")
+    assert probe.get("data_source") == "fixture"
+    if probe["torch"] == "ok":
+        assert probe["device_name"] in ("cuda", "mps", "cpu") or probe["device_name"].startswith(
+            ("cuda:", "rocm")
+        )
